@@ -403,13 +403,13 @@ def analyze_market(symbol, timeframe):
         else:
             reasons.append("Financial news sentiment is neutral")
 
-    if score >= 4:
+    if score >= 3:
         signal = "CALL"
         description = (
             f"Bullish confirmation. Score {score:+d}. "
             f"News sentiment {sentiment:+.2f}. Analysis only."
         )
-    elif score <= -4:
+    elif score <= -3:
         signal = "PUT"
         description = (
             f"Bearish confirmation. Score {score:+d}. "
