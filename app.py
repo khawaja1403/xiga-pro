@@ -24,6 +24,8 @@ def init_state():
             "success": False,
         },
         "page": "Trade",
+        "analysis_pending": None,
+        "trade_pending": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -31,61 +33,13 @@ def init_state():
 
 init_state()
 
-ASSETS = {
-    "Forex": {
-        "🇺🇸 🇪🇺 EUR/USD": "EUR/USD",
-        "🇬🇧 🇺🇸 GBP/USD": "GBP/USD",
-        "🇺🇸 🇯🇵 USD/JPY": "USD/JPY",
-        "🇦🇺 🇺🇸 AUD/USD": "AUD/USD",
-        "🇺🇸 🇨🇦 USD/CAD": "USD/CAD",
-        "🇺🇸 🇨🇭 USD/CHF": "USD/CHF",
-        "🇳🇿 🇺🇸 NZD/USD": "NZD/USD",
-        "🇪🇺 🇯🇵 EUR/JPY": "EUR/JPY",
-        "🇪🇺 🇬🇧 EUR/GBP": "EUR/GBP",
-        "🇬🇧 🇯🇵 GBP/JPY": "GBP/JPY",
-    },
-    "Stocks": {
-        "🍎 Apple": "AAPL",
-        "🪟 Microsoft": "MSFT",
-        "🚗 Tesla": "TSLA",
-        "🛒 Amazon": "AMZN",
-        "💻 NVIDIA": "NVDA",
-        "🎬 Netflix": "NFLX",
-        "🔵 Meta": "META",
-        "💳 Visa": "V",
-        "🛩 Boeing": "BA",
-        "🤖 Palantir": "PLTR",
-        "⚙ AMD": "AMD",
-        "🪙 Coinbase": "COIN",
-    },
-    "Crypto": {
-        "₿ Bitcoin": "BTC/USD",
-        "Ξ Ethereum": "ETH/USD",
-        "◎ Solana": "SOL/USD",
-        "🐕 Dogecoin": "DOGE/USD",
-        "🔷 Cardano": "ADA/USD",
-        "🟡 BNB": "BNB/USD",
-        "🔗 Chainlink": "LINK/USD",
-        "⚡ Litecoin": "LTC/USD",
-        "🔵 XRP": "XRP/USD",
-    },
-    "Commodities": {
-        "🥇 Gold": "XAU/USD",
-        "🥈 Silver": "XAG/USD",
-        "🛢 WTI Crude Oil": "WTI/USD",
-        "🛢 Brent Oil": "BRENT/USD",
-        "🔥 Natural Gas": "NATGAS/USD",
-    },
-    "Indices": {
-        "📊 S&P 500": "SPX",
-        "💻 NASDAQ 100": "NDX",
-        "🏦 Dow Jones": "DJI",
-        "🇩🇪 DAX": "DAX",
-        "🇬🇧 FTSE 100": "FTSE",
-        "🇯🇵 Nikkei 225": "N225",
-    },
+ASSETS_FALLBACK = {
+    "Forex": {"EUR/USD":"EURUSD","GBP/USD":"GBPUSD","USD/JPY":"USDJPY","AUD/USD":"AUDUSD","USD/CAD":"USDCAD","USD/CHF":"USDCHF","NZD/USD":"NZDUSD","EUR/JPY":"EURJPY","EUR/GBP":"EURGBP","GBP/JPY":"GBPJPY"},
+    "Stocks": {"Apple (AAPL)":"AAPL","Microsoft (MSFT)":"MSFT","Tesla (TSLA)":"TSLA","Amazon (AMZN)":"AMZN","NVIDIA (NVDA)":"NVDA","Netflix (NFLX)":"NFLX","Meta (META)":"META","Visa (V)":"V","Boeing (BA)":"BA","Palantir (PLTR)":"PLTR","AMD":"AMD","Coinbase (COIN)":"COIN"},
+    "Crypto": {"Bitcoin (BTCUSD)":"BTCUSD","Ethereum (ETHUSD)":"ETHUSD","Solana (SOLUSD)":"SOLUSD","Dogecoin (DOGEUSD)":"DOGEUSD","Cardano (ADAUSD)":"ADAUSD","BNB (BNBUSD)":"BNBUSD","Chainlink (LINKUSD)":"LINKUSD","Litecoin (LTCUSD)":"LTCUSD","XRP (XRPUSD)":"XRPUSD"},
+    "Commodities": {"Gold (XAUUSD)":"XAUUSD","Silver (XAGUSD)":"XAGUSD","WTI Oil (USOIL)":"USOIL","Brent Oil (UKOIL)":"UKOIL","Natural Gas (NATGAS)":"NATGAS"},
+    "Indices": {"S&P 500 (US500)":"US500","NASDAQ 100 (USTEC)":"USTEC","Dow Jones (US30)":"US30","DAX (DE40)":"DE40","FTSE 100 (UK100)":"UK100","Nikkei 225 (JP225)":"JP225"},
 }
-
 TIMEFRAMES = {"1 MIN": "1", "5 MIN": "5"}
 
 def get_secret(name):
@@ -96,68 +50,76 @@ def get_secret(name):
 
 # Market data is supplied by BiQuote. Its public read API requires no API key.
 BIQUOTE_BASE = "https://biquote.io/api"
-BIQUOTE_SYMBOLS = {
-    "EUR/USD":"EURUSD","GBP/USD":"GBPUSD","USD/JPY":"USDJPY","AUD/USD":"AUDUSD",
-    "USD/CAD":"USDCAD","USD/CHF":"USDCHF","NZD/USD":"NZDUSD","EUR/JPY":"EURJPY",
-    "EUR/GBP":"EURGBP","GBP/JPY":"GBPJPY",
-    "BTC/USD":"BTCUSD","ETH/USD":"ETHUSD","SOL/USD":"SOLUSD","DOGE/USD":"DOGEUSD",
-    "ADA/USD":"ADAUSD","BNB/USD":"BNBUSD","LINK/USD":"LINKUSD","LTC/USD":"LTCUSD","XRP/USD":"XRPUSD",
-    "XAU/USD":"XAUUSD","XAG/USD":"XAGUSD","WTI/USD":"USOIL","BRENT/USD":"UKOIL","NATGAS/USD":"NATGAS",
-    "SPX":"US500","NDX":"USTEC","DJI":"US30","DAX":"DE40","FTSE":"UK100","N225":"JP225",
-    "AAPL":"AAPL","MSFT":"MSFT","TSLA":"TSLA","AMZN":"AMZN","NVDA":"NVDA","NFLX":"NFLX",
-    "META":"META","V":"V","BA":"BA","PLTR":"PLTR","AMD":"AMD","COIN":"COIN",
-}
 
-def biquote_symbol(symbol):
-    return BIQUOTE_SYMBOLS.get(symbol, symbol.replace("/", ""))
+@st.cache_data(ttl=900, show_spinner=False)
+def get_symbol_catalog():
+    try:
+        r = requests.get(f"{BIQUOTE_BASE}/symbols", params={"quotedWithinDays": 7}, timeout=20)
+        if r.status_code != 200:
+            return ASSETS_FALLBACK, f"CATALOG ERROR {r.status_code} • USING FALLBACK"
+        payload = r.json()
+        items = payload if isinstance(payload, list) else (payload.get("symbols") or payload.get("items") or payload.get("data") or [])
+        if not isinstance(items, list):
+            return ASSETS_FALLBACK, "CATALOG FORMAT ERROR • USING FALLBACK"
+        grouped = {"Forex":{},"Stocks":{},"Crypto":{},"Commodities":{},"Indices":{},"Other":{}}
+        for item in items:
+            if not isinstance(item, dict): continue
+            name = str(item.get("name") or item.get("symbol") or "").strip()
+            if not name: continue
+            desc = str(item.get("description") or "").strip()
+            kind = str(item.get("type") or "Other").lower()
+            category = {"forex":"Forex","stock":"Stocks","crypto":"Crypto","commodity":"Commodities","index":"Indices"}.get(kind,"Other")
+            label = f"{desc} ({name})" if desc and desc.upper()!=name.upper() else name
+            grouped[category][label] = name
+        grouped = {k:v for k,v in grouped.items() if v}
+        return grouped or ASSETS_FALLBACK, f"CATALOG OK • {len(items)} INSTRUMENTS"
+    except requests.exceptions.Timeout:
+        return ASSETS_FALLBACK, "CATALOG TIMEOUT • USING FALLBACK"
+    except requests.exceptions.RequestException:
+        return ASSETS_FALLBACK, "CATALOG NETWORK ERROR • USING FALLBACK"
+    except Exception as exc:
+        return ASSETS_FALLBACK, f"CATALOG ERROR • USING FALLBACK: {exc}"
 
 @st.cache_data(ttl=15, show_spinner=False)
-def get_candles_cached(symbol, resolution):
+def get_candles_cached(provider_symbol, resolution):
     interval = "1m" if resolution == "1" else "5m"
-    provider_symbol = biquote_symbol(symbol)
     try:
-        response = requests.get(
-            f"{BIQUOTE_BASE}/{provider_symbol}/ohlc",
-            params={"interval": interval, "limit": 150},
-            timeout=15,
-        )
+        response = requests.get(f"{BIQUOTE_BASE}/{provider_symbol}/ohlc", params={"interval": interval, "limit": 150}, timeout=15)
         if response.status_code != 200:
-            try:
-                body = response.json()
-                message = body.get("message") or body.get("error")
-            except Exception:
-                message = None
-            if response.status_code == 404:
-                return [], f"BIQUOTE SYMBOL NOT FOUND: {provider_symbol}"
-            if response.status_code == 429:
-                return [], "BIQUOTE RATE LIMIT — PLEASE RETRY"
+            try: message = response.json().get("message") or response.json().get("error")
+            except Exception: message = None
+            if response.status_code == 404: return [], f"BIQUOTE SYMBOL NOT FOUND: {provider_symbol}"
+            if response.status_code == 429: return [], "BIQUOTE RATE LIMIT — PLEASE RETRY"
             return [], f"BIQUOTE ERROR {response.status_code}" + (f": {message}" if message else "")
-        data = response.json()
-        bars = data.get("bars", [])
-        if not isinstance(bars, list) or not bars:
-            return [], f"NO CANDLE DATA FOR {provider_symbol}"
-        candles = []
+        bars = response.json().get("bars", [])
+        candles=[]
         for bar in reversed(bars):
             try:
-                candles.append({
-                    "open": float(bar["open"]), "high": float(bar["high"]),
-                    "low": float(bar["low"]), "close": float(bar["close"]),
-                    "datetime": str(bar["openTime"]), "is_open": bool(bar.get("isOpen", False)),
-                })
-            except (KeyError, TypeError, ValueError):
-                continue
-        if len(candles) < 60:
-            return [], f"NOT ENOUGH DATA ({len(candles)} CANDLES)"
+                candles.append({"open":float(bar["open"]),"high":float(bar["high"]),"low":float(bar["low"]),"close":float(bar["close"]),"datetime":str(bar["openTime"]),"is_open":bool(bar.get("isOpen",False))})
+            except (KeyError,TypeError,ValueError): pass
+        if len(candles)<60: return [], f"NOT ENOUGH DATA ({len(candles)} CANDLES)"
         return candles, "BIQUOTE MARKET DATA CONNECTED"
-    except requests.exceptions.Timeout:
-        return [], "BIQUOTE MARKET DATA TIMEOUT"
-    except requests.exceptions.RequestException:
-        return [], "BIQUOTE NETWORK ERROR"
-    except Exception as exc:
-        return [], f"BIQUOTE DATA ERROR: {exc}"
+    except requests.exceptions.Timeout: return [], "BIQUOTE MARKET DATA TIMEOUT"
+    except requests.exceptions.RequestException: return [], "BIQUOTE NETWORK ERROR"
+    except Exception as exc: return [], f"BIQUOTE DATA ERROR: {exc}"
 
-def get_candles(symbol, resolution):
+def get_candles(symbol, resolution, fresh=False):
+    if fresh:
+        try: get_candles_cached.clear()
+        except Exception: pass
     return get_candles_cached(symbol, resolution)
+
+@st.cache_data(ttl=2, show_spinner=False)
+def get_latest_tick(provider_symbol):
+    try:
+        r=requests.get(f"{BIQUOTE_BASE}/{provider_symbol}",timeout=10)
+        if r.status_code!=200: return None, f"BIQUOTE TICK ERROR {r.status_code}"
+        data=r.json(); price=data.get("mid")
+        if price is None: price=data.get("last") or data.get("bid") or data.get("ask")
+        if price is None: return None,"NO LIVE PRICE"
+        return {"price":float(price),"timestamp":data.get("timestamp"),"market_state":data.get("marketState"),"stale":bool(data.get("stale",False))},"BIQUOTE LIVE PRICE CONNECTED"
+    except requests.exceptions.RequestException: return None,"BIQUOTE TICK NETWORK ERROR"
+    except Exception as exc: return None,f"BIQUOTE TICK ERROR: {exc}"
 
 def get_marketaux_key():
     try:
@@ -461,10 +423,19 @@ def analyze_market(symbol, timeframe):
             "Waiting for stronger confirmation."
         )
 
+    # Current-trade probability estimate. This is a model estimate derived
+    # from the strength and agreement of the indicators above; it is NOT a
+    # guaranteed probability and is never taken from previous trade results.
+    # Map the composite score to a bounded estimate for display.
+    probability = min(95, max(50, int(50 + abs(score) * 6)))
+    if signal == "NO TRADE":
+        probability = max(50, min(60, int(50 + abs(score) * 2)))
+
     return {
         "success": True,
         "signal": signal,
         "strength": min(5, max(1, abs(score))),
+        "probability": probability,
         "score": score,
         "price": current,
         "entry_candle_time": closed[-1]["datetime"],
@@ -499,166 +470,47 @@ def calculate_outcome(signal, entry_price, result_price):
     return None
 
 def update_win_loss_totals():
-    st.session_state.wins = sum(
-        1 for item in st.session_state.history
-        if item.get("status") == "WIN"
-    )
-    st.session_state.losses = sum(
-        1 for item in st.session_state.history
-        if item.get("status") == "LOSS"
-    )
-
-def get_pending_countdown(item):
-    """Return remaining seconds until the expected result time."""
-    value = item.get("next_check_at")
-    if not value:
-        return None
-    target = parse_candle_time(value)
-    if target is None:
-        return None
-    if target.tzinfo is None:
-        target = target.replace(tzinfo=timezone.utc)
-    now = datetime.now(target.tzinfo)
-    return max(0, int((target - now).total_seconds()))
+    st.session_state.wins = sum(1 for item in st.session_state.history if item.get("status") == "WIN")
+    st.session_state.losses = sum(1 for item in st.session_state.history if item.get("status") == "LOSS")
 
 def format_countdown(seconds):
-    if seconds is None:
-        return "—"
+    if seconds is None: return "—"
     minutes, secs = divmod(max(0, int(seconds)), 60)
     return f"{minutes:02d}:{secs:02d}"
 
-def update_pending_results():
-    """Resolve pending signals using a simple, real-time duration countdown.
+def seconds_until(iso_value):
+    target = parse_candle_time(iso_value) if iso_value else None
+    if target is None: return 0
+    if target.tzinfo is None: target = target.replace(tzinfo=timezone.utc)
+    return max(0, int((target - datetime.now(timezone.utc)).total_seconds()))
 
-    The countdown starts when ANALYZE MARKET creates the signal.  This avoids
-    depending on a provider candle timestamp that may already be older than
-    the moment the user pressed the button.
-    """
-    update_win_loss_totals()
-
-    pending = [
-        item for item in st.session_state.history
-        if (
-            item.get("status") == "PENDING"
-            and item.get("signal") in ("CALL", "PUT")
-            and item.get("symbol")
-            and item.get("timeframe") in TIMEFRAMES
-        )
-    ]
-
-    candle_cache = {}
-
-    for item in pending:
-        resolution = TIMEFRAMES[item["timeframe"]]
-        duration = timedelta(minutes=1 if resolution == "1" else 5)
-
-        target_raw = item.get("next_check_at")
-        target = parse_candle_time(target_raw) if target_raw else None
-        if target is None:
-            # Backward-compatible recovery for an older pending signal.
-            created_raw = item.get("signal_created_at")
-            created = parse_candle_time(created_raw) if created_raw else None
-            if created is None:
-                created = datetime.now(timezone.utc)
-            if created.tzinfo is None:
-                created = created.replace(tzinfo=timezone.utc)
-            target = created + duration
-            item["signal_created_at"] = created.isoformat()
-            item["next_check_at"] = target.isoformat()
-
-        if target.tzinfo is None:
-            target = target.replace(tzinfo=timezone.utc)
-
-        now = datetime.now(target.tzinfo)
-        remaining = int(max(0, (target - now).total_seconds()))
-
-        if remaining > 0:
-            item["tracker_state"] = "RESULT COUNTDOWN"
-            item["tracking_error"] = f"Result in {remaining}s"
-            continue
-
-        # Countdown is finished. Fetch fresh candles and resolve the most
-        # recent CLOSED candle that belongs after the signal candle.
-        cache_key = (item["symbol"], resolution)
-        if cache_key not in candle_cache:
-            try:
-                get_candles_cached.clear()
-            except Exception:
-                pass
-            candle_cache[cache_key] = get_candles(item["symbol"], resolution)
-
-        candles, api_status = candle_cache[cache_key]
-        item["tracker_last_check"] = datetime.now(
-            ZoneInfo("Asia/Karachi")
-        ).strftime("%H:%M:%S PKT")
-
+def resolve_trade_if_ready():
+    pending = st.session_state.get("trade_pending")
+    if not pending or seconds_until(pending.get("complete_at")) > 0: return
+    tick, status = get_latest_tick(pending["symbol"])
+    if tick:
+        result_price = float(tick["price"])
+    else:
+        candles, candle_status = get_candles(pending["symbol"], TIMEFRAMES[pending["timeframe"]], fresh=True)
         if not candles:
-            item["tracker_state"] = "API ERROR"
-            item["tracking_error"] = api_status
-            continue
-
-        signal_created_raw = item.get("signal_created_at")
-        signal_created = parse_candle_time(signal_created_raw) if signal_created_raw else None
-        if signal_created is None:
-            signal_created = now - duration
-        if signal_created.tzinfo is None:
-            signal_created = signal_created.replace(tzinfo=timezone.utc)
-
-        closed_candidates = []
-        for candle in candles:
-            candle_time = parse_candle_time(candle.get("datetime"))
-            if candle_time is None:
-                continue
-            if candle_time.tzinfo is None:
-                candle_time = candle_time.replace(tzinfo=timezone.utc)
-            candle_close = candle_time + duration
-            is_open = bool(candle.get("is_open", False))
-            if candle_time >= signal_created and candle_close <= now and not is_open:
-                closed_candidates.append((candle_time, candle))
-
-        # Provider feeds can briefly omit/lag isOpen. If no closed candidate
-        # is flagged, accept a candle whose timestamp proves its full duration
-        # has elapsed, but only after the requested countdown has finished.
-        if not closed_candidates:
-            for candle in candles:
-                candle_time = parse_candle_time(candle.get("datetime"))
-                if candle_time is None:
-                    continue
-                if candle_time.tzinfo is None:
-                    candle_time = candle_time.replace(tzinfo=timezone.utc)
-                candle_close = candle_time + duration
-                if candle_time >= signal_created and candle_close <= now:
-                    closed_candidates.append((candle_time, candle))
-
-        if not closed_candidates:
-            item["tracker_state"] = "WAITING FOR RESULT"
-            item["tracking_error"] = "Waiting for the completed result candle."
-            continue
-
-        result_candle_time, result_candle = sorted(
-            closed_candidates, key=lambda pair: pair[0]
-        )[-1]
-
-        try:
-            result_price = float(result_candle["close"])
-        except (KeyError, TypeError, ValueError):
-            item["tracker_state"] = "INVALID RESULT"
-            item["tracking_error"] = "Result candle close is unavailable."
-            continue
-
-        outcome = calculate_outcome(item["signal"], item["price"], result_price)
-        if outcome in ("WIN", "LOSS", "DRAW"):
-            item["status"] = outcome
-
-        item["result_price"] = result_price
-        item["result_candle_time"] = result_candle.get("datetime")
-        item["tracker_state"] = f"RESULT {outcome}"
-        item["tracking_error"] = ""
-        item["checked_at"] = datetime.now(
-            ZoneInfo("Asia/Karachi")
-        ).strftime("%Y-%m-%d %H:%M:%S PKT")
-
+            pending["state"] = "RESULT ERROR"; pending["error"] = f"{status}; {candle_status}"; return
+        closed = completed_candles(candles, TIMEFRAMES[pending["timeframe"]])
+        if not closed:
+            pending["state"] = "RESULT ERROR"; pending["error"] = f"{status}; NO CLOSED RESULT CANDLE"; return
+        result_price = float(closed[-1]["close"])
+    outcome = calculate_outcome(pending["signal"], pending["entry_price"], result_price)
+    checked = datetime.now(ZoneInfo("Asia/Karachi")).strftime("%Y-%m-%d %H:%M:%S PKT")
+    for item in st.session_state.history:
+        if item.get("id") == pending.get("id"):
+            item["status"] = outcome; item["result_price"] = result_price; item["checked_at"] = checked; break
+    st.session_state.result["status"] = outcome
+    st.session_state.result["result_price"] = result_price
+    st.session_state.result["checked_at"] = checked
+    st.session_state.result["description"] = f"Individual signal result: {outcome}. Entry {pending['entry_price']:.6g} → result {result_price:.6g}."
+    st.session_state.trade_pending = None
     update_win_loss_totals()
+
+ASSETS, catalog_status = get_symbol_catalog()
 
 st.markdown("""
 <style>
@@ -702,39 +554,33 @@ if selected_page == "Trade":
 
     @st.fragment(run_every="1s")
     def trade_page():
-        update_pending_results()
+        resolve_trade_if_ready()
+        category_options = list(ASSETS.keys())
+        default_category = st.session_state.get("category", category_options[0])
+        if default_category not in category_options:
+            default_category = category_options[0]
 
         st.markdown('<div class="xiga-card">', unsafe_allow_html=True)
         col1, col2 = st.columns(2)
-
         with col1:
-            category = st.selectbox(
-                "Asset", list(ASSETS.keys()), key="category"
-            )
-
-        asset_names = list(ASSETS[category].keys())
-
+            category = st.selectbox("Asset", category_options, index=category_options.index(default_category), key="category")
+        asset_map = ASSETS.get(category) or {}
+        asset_names = list(asset_map.keys())
+        if not asset_names:
+            st.error("No instruments are currently available in this category.")
+            st.markdown("</div>", unsafe_allow_html=True)
+            return
+        current_asset = st.session_state.get("asset")
+        if current_asset not in asset_names:
+            current_asset = asset_names[0]
         with col2:
-            display_asset = st.selectbox(
-                "Market", asset_names, key="asset"
-            )
-
-        timeframe = st.selectbox(
-            "Timeframe",
-            list(TIMEFRAMES.keys()),
-            index=0,
-            key="timeframe",
-        )
-
-        st.markdown(
-            '<div class="xiga-market-status">● LIVE MARKET READY</div>',
-            unsafe_allow_html=True,
-        )
+            display_asset = st.selectbox("Market", asset_names, index=asset_names.index(current_asset), key="asset")
+        timeframe = st.selectbox("Timeframe", list(TIMEFRAMES.keys()), index=0, key="timeframe")
+        st.markdown(f'<div class="xiga-market-status">● LIVE MARKET READY • {catalog_status}</div>', unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
         result = st.session_state.result
         signal = result.get("signal", "READY")
-
         if signal == "CALL":
             circle_class, arrow, title = "call", "↗", "BUY (CALL)"
             direction, title_class = "UPWARD SIGNAL", "call-text"
@@ -743,195 +589,122 @@ if selected_page == "Trade":
             direction, title_class = "DOWNWARD SIGNAL", "put-text"
         elif signal == "NO TRADE":
             circle_class, arrow, title = "neutral", "—", "NO TRADE"
-            direction = "WAIT FOR STRONGER CONFIRMATION"
-            title_class = "neutral-text"
+            direction, title_class = "WAIT FOR STRONGER CONFIRMATION", "neutral-text"
         else:
             circle_class, arrow, title = "neutral", "◇", "AI READY"
             direction, title_class = "WAITING FOR ANALYSIS", "neutral-text"
 
         clean_asset = display_asset
-        for flag in ["🇺🇸","🇪🇺","🇬🇧","🇯🇵","🇦🇺","🇨🇦","🇨🇭","🇳🇿","🇩🇪"]:
-            clean_asset = clean_asset.replace(flag, "")
-        clean_asset = clean_asset.strip()
-
         strength = int(result.get("strength", 0))
-        filled = "● " * strength
-        empty = "● " * (5 - strength)
+        filled, empty = "● " * strength, "● " * max(0, 5 - strength)
+        strength_html = ('<span style="color:#29f5a6">' + filled + '</span><span style="color:#26394c">' + empty + '</span>') if strength else '<span style="color:#26394c">● ● ● ● ●</span>'
 
-        if strength:
-            strength_html = (
-                '<span style="color:#29f5a6">' + filled + "</span>"
-                '<span style="color:#26394c">' + empty + "</span>"
-            )
+        analysis_pending = st.session_state.get("analysis_pending")
+        trade_pending = st.session_state.get("trade_pending")
+        if analysis_pending:
+            remaining = seconds_until(analysis_pending.get("complete_at"))
+            win_display = format_countdown(remaining)
+            win_status = f'● {analysis_pending.get("timeframe", "1 MIN")} ANALYZING'
+            ai_title = "ANALYZING MARKET"
+        elif trade_pending:
+            remaining = seconds_until(trade_pending.get("complete_at"))
+            win_display = f'{int(result.get("probability", 50))}%'
+            win_status = f'● TRADE TIME {format_countdown(remaining)}'
+            ai_title = "SIGNAL READY • TRADE WINDOW"
+        elif result.get("status") in ("WIN", "LOSS", "DRAW"):
+            win_display = result.get("status")
+            win_status = "● INDIVIDUAL SIGNAL RESULT"
+            ai_title = "TRADE WINDOW COMPLETE"
+        elif result.get("success") and result.get("signal") in ("CALL", "PUT"):
+            win_display = f'{int(result.get("probability", 50))}%'
+            win_status = "● CURRENT TRADE PROBABILITY"
+            ai_title = "AI ANALYSIS COMPLETE"
+        elif result.get("success") and result.get("signal") == "NO TRADE":
+            win_display, win_status, ai_title = "—", "● NO STRONG SIGNAL", "ANALYSIS COMPLETE"
         else:
-            strength_html = (
-                '<span style="color:#26394c">● ● ● ● ●</span>'
-            )
+            win_display, win_status, ai_title = "—", "● START ANALYSIS", "AI ENGINE READY"
 
-        total = st.session_state.wins + st.session_state.losses
-
-        # REAL WIN RATE: completed WIN + LOSS results only.
-        # While a signal is pending, show the actual result-candle countdown
-        # inside the Win Rate card. The percentage appears only after the
-        # countdown/result has completed.
-        pending_items = [
-            item for item in st.session_state.history
-            if item.get("status") == "PENDING"
-            and item.get("signal") in ("CALL", "PUT")
-        ]
-        if pending_items:
-            pending = pending_items[0]
-            remaining = get_pending_countdown(pending)
-            if remaining is not None and remaining > 0:
-                win_display = format_countdown(remaining)
-                unit = "1 MIN" if pending.get("timeframe") == "1 MIN" else "5 MIN"
-                win_status = f"● {unit} RESULT COUNTDOWN"
-            elif remaining == 0 and pending.get("status") == "PENDING":
-                win_display = "00:00"
-                win_status = "● CHECKING RESULT"
-            elif total:
-                win_display = f"{round(st.session_state.wins / total * 100, 1)}%"
-                win_status = (
-                    f"● {st.session_state.wins} WINS • "
-                    f"{st.session_state.losses} LOSSES"
-                )
-            else:
-                win_display = "—"
-                win_status = "● CHECKING RESULT"
-        elif total:
-            win_display = f"{round(st.session_state.wins / total * 100, 1)}%"
-            win_status = (
-                f"● {st.session_state.wins} WINS • "
-                f"{st.session_state.losses} LOSSES"
-            )
+        if trade_pending:
+            tracker_line = f'<div style="color:#6f8499;font-size:7px;margin-top:6px;">TRADE TIMER: {format_countdown(seconds_until(trade_pending.get("complete_at")))} • ENTRY {trade_pending.get("entry_price", "—")} • RESULT AT 00:00</div>'
+        elif analysis_pending:
+            tracker_line = f'<div style="color:#6f8499;font-size:7px;margin-top:6px;">ANALYSIS TIMER: {format_countdown(seconds_until(analysis_pending.get("complete_at")))}</div>'
+        elif result.get("status") in ("WIN", "LOSS", "DRAW"):
+            tracker_line = f'<div style="color:#6f8499;font-size:7px;margin-top:6px;">INDIVIDUAL RESULT: {result.get("status")}</div>'
         else:
-            win_display = "—"
-            win_status = "● WAITING FOR RESULTS"
+            tracker_line = ""
 
-        ai_title = (
-            "AI ANALYSIS COMPLETE"
-            if result.get("success")
-            else "AI ENGINE READY"
-        )
-
-        tracker_line = ""
-        if pending_items:
-            p = pending_items[0]
-            countdown_text = ""
-            remaining = get_pending_countdown(p)
-            if remaining is not None and remaining > 0:
-                countdown_text = f' • {format_countdown(remaining)} remaining'
-            tracker_line = (
-                '<div style="color:#6f8499;font-size:7px;margin-top:6px;">'
-                f'TRACKER: {p.get("tracker_state","STARTING")} • '
-                f'{p.get("tracker_last_check","—")}{countdown_text}'
-                "</div>"
-            )
-
-        description = result.get(
-            "description",
-            "Select an asset and start analysis.",
-        )
-
-        st.markdown(
-            f"""
+        description = result.get("description", "Select an asset and start analysis.")
+        st.markdown(f'''
 <div class="xiga-card xiga-signal">
 <div class="xiga-signal-label">SIGNAL FOR</div>
 <div class="xiga-asset">{clean_asset}</div>
 <div class="xiga-time">● TIMEFRAME: {timeframe}</div>
-<div class="xiga-circle {circle_class}">
-<div class="xiga-arrow">{arrow}</div>
-</div>
+<div class="xiga-circle {circle_class}"><div class="xiga-arrow">{arrow}</div></div>
 <div class="xiga-signal-title {title_class}">{title}</div>
 <div class="xiga-direction">{direction}</div>
 <br>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-<div class="xiga-stat">
-<div class="xiga-stat-label">SIGNAL STRENGTH</div>
-<div class="xiga-strength">{strength_html}</div>
-<div class="xiga-number">{strength}/5</div>
+<div class="xiga-stat"><div class="xiga-stat-label">SIGNAL STRENGTH</div><div class="xiga-strength">{strength_html}</div><div class="xiga-number">{strength}/5</div></div>
+<div class="xiga-stat"><div class="xiga-stat-label">WIN PROBABILITY</div><div class="xiga-win">{win_display}</div><div style="color:#29f5a6;font-size:8px;margin-top:3px;">{win_status}</div></div>
 </div>
-<div class="xiga-stat">
-<div class="xiga-stat-label">WIN RATE</div>
-<div class="xiga-win">{win_display}</div>
-<div style="color:#29f5a6;font-size:8px;margin-top:3px;">{win_status}</div>
+<div class="xiga-ai"><div class="xiga-ai-icon">✓</div><div><div class="xiga-ai-title">{ai_title}</div><div class="xiga-ai-desc">{description}</div>{tracker_line}</div></div>
 </div>
-</div>
-<div class="xiga-ai">
-<div class="xiga-ai-icon">✓</div>
-<div>
-<div class="xiga-ai-title">{ai_title}</div>
-<div class="xiga-ai-desc">{description}</div>
-{tracker_line}
-</div>
-</div>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
+''', unsafe_allow_html=True)
 
-        analyze_clicked = st.button(
-            "⚡ ANALYZE MARKET",
-            key="analyze_button",
-            use_container_width=True,
-        )
-
+        busy = bool(analysis_pending or trade_pending)
+        analyze_clicked = st.button("⚡ ANALYZE MARKET", key="analyze_button", use_container_width=True, disabled=busy)
         if analyze_clicked:
-            symbol = ASSETS[category][display_asset]
-
-            with st.spinner("Connecting to live market data..."):
-                analysis = analyze_market(symbol, timeframe)
-
-            if (
-                analysis.get("success")
-                and analysis.get("signal") in ("CALL", "PUT")
-            ):
-                st.session_state.signals += 1
-                st.session_state.history.insert(
-                    0,
-                    {
-                        "time": datetime.now().strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        ),
-                        "asset": clean_asset,
-                        "symbol": symbol,
-                        "timeframe": timeframe,
-                        "signal": analysis["signal"],
-                        "strength": analysis["strength"],
-                        "price": analysis.get("price", "—"),
-                        "entry_candle_time": analysis.get(
-                            "entry_candle_time", ""
-                        ),
-                        # Countdown starts at the moment the user presses
-                        # ANALYZE MARKET, not from an already-old candle time.
-                        "signal_created_at": datetime.now(timezone.utc).isoformat(),
-                        "next_check_at": (
-                            datetime.now(timezone.utc)
-                            + timedelta(minutes=1 if timeframe == "1 MIN" else 5)
-                        ).isoformat(),
-                        "status": "PENDING",
-                        "tracker_state": "RESULT COUNTDOWN",
-                        "tracker_last_check": "",
-                        "tracking_error": "",
-                        "news_sentiment": analysis.get(
-                            "news_sentiment", 0
-                        ),
-                        "news_count": analysis.get("news_count", 0),
-                    },
-                )
-                st.session_state.history = st.session_state.history[:100]
-
-            st.session_state.result = analysis
+            symbol = asset_map[display_asset]
+            duration_minutes = 1 if timeframe == "1 MIN" else 5
+            now_utc = datetime.now(timezone.utc)
+            st.session_state.analysis_pending = {
+                "id": now_utc.isoformat(), "asset": clean_asset, "symbol": symbol,
+                "timeframe": timeframe, "started_at": now_utc.isoformat(),
+                "complete_at": (now_utc + timedelta(minutes=duration_minutes)).isoformat(),
+            }
+            st.session_state.trade_pending = None
+            st.session_state.result = {
+                "success": False, "signal": "READY", "strength": 0,
+                "probability": None, "status": "ANALYSIS IN PROGRESS",
+                "description": f"Analyzing {clean_asset} for {duration_minutes} minute{'s' if duration_minutes != 1 else ''}."
+            }
             st.rerun()
 
-        st.markdown(
-            """
-<div class="xiga-footer">
-🔒 SECURE • XIGA AI • V5.3 • LIVE ANALYSIS
-</div>
-""",
-            unsafe_allow_html=True,
-        )
+        analysis_pending = st.session_state.get("analysis_pending")
+        if analysis_pending and seconds_until(analysis_pending.get("complete_at")) <= 0:
+            symbol = analysis_pending["symbol"]
+            tf = analysis_pending["timeframe"]
+            with st.spinner("Finalizing market analysis..."):
+                analysis = analyze_market(symbol, tf)
+            st.session_state.result = analysis
+            st.session_state.analysis_pending = None
+            if analysis.get("success"):
+                st.session_state.signals += 1
+
+            if analysis.get("success") and analysis.get("signal") in ("CALL", "PUT"):
+                entry_tick, entry_status = get_latest_tick(symbol)
+                entry_price = float(entry_tick["price"]) if entry_tick else float(analysis.get("price", 0))
+                duration_minutes = 1 if tf == "1 MIN" else 5
+                start = datetime.now(timezone.utc)
+                trade_id = analysis_pending["id"]
+                st.session_state.trade_pending = {
+                    "id": trade_id, "asset": analysis_pending["asset"], "symbol": symbol,
+                    "timeframe": tf, "signal": analysis["signal"],
+                    "probability": int(analysis.get("probability", 50)), "entry_price": entry_price,
+                    "started_at": start.isoformat(), "complete_at": (start + timedelta(minutes=duration_minutes)).isoformat(),
+                    "state": "TRADE COUNTDOWN", "error": "",
+                }
+                st.session_state.history.insert(0, {
+                    "id": trade_id, "asset": analysis_pending["asset"], "symbol": symbol,
+                    "signal": analysis["signal"], "strength": analysis.get("strength", 0),
+                    "probability": analysis.get("probability", 50), "price": entry_price,
+                    "timeframe": tf, "time": start.strftime("%Y-%m-%d %H:%M:%S PKT"),
+                    "status": "PENDING", "result_price": "—",
+                    "analysis_description": analysis.get("description", ""), "entry_status": entry_status,
+                })
+            st.rerun()
+
+        st.markdown('<div class="xiga-footer">🔒 SECURE • XIGA AI • V5.3 • LIVE ANALYSIS</div>', unsafe_allow_html=True)
 
     trade_page()
 
@@ -960,6 +733,8 @@ Timeframe: `{item["timeframe"]}`
 Signal Time: `{item["time"]}`
 
 Result Candle: `{item.get("result_candle_time", "—")}`
+
+Probability: **{item.get("probability", "—")}%**
 
 Status: **{item.get("status", "PENDING")}**
 
@@ -1013,23 +788,12 @@ elif selected_page == "Profile":
 
     completed = st.session_state.wins + st.session_state.losses
     st.metric("Completed Results", completed)
-
-    # FIXED REAL WIN RATE
-    historical_win_rate = (
-        f"{round(st.session_state.wins / completed * 100, 1)}%"
-        if completed
-        else "—"
-    )
-
-    st.metric("Historical Win Rate", historical_win_rate)
-
-    st.caption(
-        "Win rate is calculated only from actual completed results "
-        "recorded by XIGA."
-    )
+    if completed:
+        st.metric("Observed Signal Win Rate", f"{st.session_state.wins / completed * 100:.1f}%")
+    st.caption("The Trade screen probability is a current model estimate for the latest analysis. It is not a guarantee and does not use previous analysis results to display the current signal.")
     st.markdown("</div>", unsafe_allow_html=True)
 
 st.caption(
     "XIGA is a market-analysis assistant. "
-    "It does not automatically place trades."
+    "It does not automatically place trades. The displayed result is the market outcome for the signal window, not proof that a user entered a trade."
 )
