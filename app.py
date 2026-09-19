@@ -528,6 +528,12 @@ def format_countdown(seconds):
     return f"{minutes:02d}:{secs:02d}"
 
 def update_pending_results():
+    """Resolve pending signals using a simple, real-time duration countdown.
+
+    The countdown starts when ANALYZE MARKET creates the signal.  This avoids
+    depending on a provider candle timestamp that may already be older than
+    the moment the user pressed the button.
+    """
     update_win_loss_totals()
 
     pending = [
@@ -537,7 +543,6 @@ def update_pending_results():
             and item.get("signal") in ("CALL", "PUT")
             and item.get("symbol")
             and item.get("timeframe") in TIMEFRAMES
-            and item.get("entry_candle_time")
         )
     ]
 
@@ -545,48 +550,42 @@ def update_pending_results():
 
     for item in pending:
         resolution = TIMEFRAMES[item["timeframe"]]
-        entry_time = parse_candle_time(item["entry_candle_time"])
-
-        if entry_time is None:
-            item["tracker_state"] = "INVALID ENTRY"
-            continue
-
-        if entry_time.tzinfo is None:
-            entry_time = entry_time.replace(tzinfo=timezone.utc)
-
         duration = timedelta(minutes=1 if resolution == "1" else 5)
 
-        # The signal is generated from the current/most recent candle.
-        # The RESULT is the following candle, so the result is not final
-        # until that following candle has also completely closed.
-        # Therefore the countdown target is entry candle start + 2 durations.
-        result_candle_start = entry_time + duration
-        result_close_time = result_candle_start + duration
-        now = datetime.now(entry_time.tzinfo)
-        item["result_candle_start"] = result_candle_start.isoformat()
-        item["next_check_at"] = result_close_time.isoformat()
+        target_raw = item.get("next_check_at")
+        target = parse_candle_time(target_raw) if target_raw else None
+        if target is None:
+            # Backward-compatible recovery for an older pending signal.
+            created_raw = item.get("signal_created_at")
+            created = parse_candle_time(created_raw) if created_raw else None
+            if created is None:
+                created = datetime.now(timezone.utc)
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            target = created + duration
+            item["signal_created_at"] = created.isoformat()
+            item["next_check_at"] = target.isoformat()
 
-        if now < result_close_time:
-            remaining = max(
-                0, int((result_close_time - now).total_seconds())
-            )
+        if target.tzinfo is None:
+            target = target.replace(tzinfo=timezone.utc)
+
+        now = datetime.now(target.tzinfo)
+        remaining = int(max(0, (target - now).total_seconds()))
+
+        if remaining > 0:
             item["tracker_state"] = "RESULT COUNTDOWN"
             item["tracking_error"] = f"Result in {remaining}s"
             continue
 
-        expected_result_time = result_candle_start
-
+        # Countdown is finished. Fetch fresh candles and resolve the most
+        # recent CLOSED candle that belongs after the signal candle.
         cache_key = (item["symbol"], resolution)
         if cache_key not in candle_cache:
-            # The analysis request is cached briefly, but the result candle
-            # must be fetched fresh when the countdown finishes.
             try:
                 get_candles_cached.clear()
             except Exception:
                 pass
-            candle_cache[cache_key] = get_candles(
-                item["symbol"], resolution
-            )
+            candle_cache[cache_key] = get_candles(item["symbol"], resolution)
 
         candles, api_status = candle_cache[cache_key]
         item["tracker_last_check"] = datetime.now(
@@ -598,52 +597,61 @@ def update_pending_results():
             item["tracking_error"] = api_status
             continue
 
-        newer = []
+        signal_created_raw = item.get("signal_created_at")
+        signal_created = parse_candle_time(signal_created_raw) if signal_created_raw else None
+        if signal_created is None:
+            signal_created = now - duration
+        if signal_created.tzinfo is None:
+            signal_created = signal_created.replace(tzinfo=timezone.utc)
+
+        closed_candidates = []
         for candle in candles:
             candle_time = parse_candle_time(candle.get("datetime"))
             if candle_time is None:
                 continue
             if candle_time.tzinfo is None:
                 candle_time = candle_time.replace(tzinfo=timezone.utc)
-            if candle_time >= expected_result_time:
-                newer.append((candle_time, candle))
+            candle_close = candle_time + duration
+            is_open = bool(candle.get("is_open", False))
+            if candle_time >= signal_created and candle_close <= now and not is_open:
+                closed_candidates.append((candle_time, candle))
 
-        newer.sort(key=lambda pair: pair[0])
+        # Provider feeds can briefly omit/lag isOpen. If no closed candidate
+        # is flagged, accept a candle whose timestamp proves its full duration
+        # has elapsed, but only after the requested countdown has finished.
+        if not closed_candidates:
+            for candle in candles:
+                candle_time = parse_candle_time(candle.get("datetime"))
+                if candle_time is None:
+                    continue
+                if candle_time.tzinfo is None:
+                    candle_time = candle_time.replace(tzinfo=timezone.utc)
+                candle_close = candle_time + duration
+                if candle_time >= signal_created and candle_close <= now:
+                    closed_candidates.append((candle_time, candle))
 
-        if not newer:
-            item["tracker_state"] = "WAITING FOR NEXT CANDLE"
-            item["tracking_error"] = "Result candle not available yet."
+        if not closed_candidates:
+            item["tracker_state"] = "WAITING FOR RESULT"
+            item["tracking_error"] = "Waiting for the completed result candle."
             continue
 
-        _, result_candle = newer[0]
+        result_candle_time, result_candle = sorted(
+            closed_candidates, key=lambda pair: pair[0]
+        )[-1]
 
-        # A 1-minute signal is resolved by the next 1-minute candle only
-        # after that candle's full duration has elapsed. Do not rely solely
-        # on the provider's isOpen flag because it may lag briefly.
-        result_time = parse_candle_time(result_candle.get("datetime"))
-        if result_time is None:
-            item["tracker_state"] = "WAITING FOR CANDLE CLOSE"
-            item["tracking_error"] = "Result candle time is unavailable."
-            continue
-        if result_time.tzinfo is None:
-            result_time = result_time.replace(tzinfo=timezone.utc)
-        result_duration = timedelta(minutes=1 if resolution == "1" else 5)
-        if datetime.now(result_time.tzinfo) < result_time + result_duration:
-            remaining = max(0, int((result_time + result_duration - datetime.now(result_time.tzinfo)).total_seconds()))
-            item["tracker_state"] = "WAITING FOR CANDLE CLOSE"
-            item["tracking_error"] = f"Result candle closes in about {remaining}s"
+        try:
+            result_price = float(result_candle["close"])
+        except (KeyError, TypeError, ValueError):
+            item["tracker_state"] = "INVALID RESULT"
+            item["tracking_error"] = "Result candle close is unavailable."
             continue
 
-        result_price = float(result_candle["close"])
-        outcome = calculate_outcome(
-            item["signal"], item["price"], result_price
-        )
-
+        outcome = calculate_outcome(item["signal"], item["price"], result_price)
         if outcome in ("WIN", "LOSS", "DRAW"):
             item["status"] = outcome
 
         item["result_price"] = result_price
-        item["result_candle_time"] = result_candle["datetime"]
+        item["result_candle_time"] = result_candle.get("datetime")
         item["tracker_state"] = f"RESULT {outcome}"
         item["tracking_error"] = ""
         item["checked_at"] = datetime.now(
@@ -778,7 +786,7 @@ if selected_page == "Trade":
                 win_display = format_countdown(remaining)
                 unit = "1 MIN" if pending.get("timeframe") == "1 MIN" else "5 MIN"
                 win_status = f"● {unit} RESULT COUNTDOWN"
-            elif remaining == 0 and pending.get("tracker_state") in ("RESULT COUNTDOWN", "WAITING FOR RESULT CANDLE"):
+            elif remaining == 0 and pending.get("status") == "PENDING":
                 win_display = "00:00"
                 win_status = "● CHECKING RESULT"
             elif total:
@@ -894,8 +902,15 @@ if selected_page == "Trade":
                         "entry_candle_time": analysis.get(
                             "entry_candle_time", ""
                         ),
+                        # Countdown starts at the moment the user presses
+                        # ANALYZE MARKET, not from an already-old candle time.
+                        "signal_created_at": datetime.now(timezone.utc).isoformat(),
+                        "next_check_at": (
+                            datetime.now(timezone.utc)
+                            + timedelta(minutes=1 if timeframe == "1 MIN" else 5)
+                        ).isoformat(),
                         "status": "PENDING",
-                        "tracker_state": "SIGNAL CREATED",
+                        "tracker_state": "RESULT COUNTDOWN",
                         "tracker_last_check": "",
                         "tracking_error": "",
                         "news_sentiment": analysis.get(
