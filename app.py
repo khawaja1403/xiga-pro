@@ -795,5 +795,5 @@ elif selected_page == "Profile":
 
 st.caption(
     "XIGA is a market-analysis assistant. "
-    "It does not automatically place trades. The displayed result is the market outcome for the signal window, not proof that a user entered a trade."
+    "It does not automatically place trades."
 )
