@@ -311,15 +311,19 @@ def parse_candle_time(value):
     return None
 
 def candle_is_completed(candle, interval):
+    # Use the candle's timestamp as the authoritative close test.
+    # BiQuote exposes isOpen, but a cached/open flag can briefly lag the clock.
+    dt = parse_candle_time(candle.get("datetime"))
+    if dt is not None:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        duration = timedelta(minutes=1 if interval == "1" else 5)
+        if datetime.now(dt.tzinfo) >= dt + duration:
+            return True
+        return False
     if "is_open" in candle:
         return not bool(candle.get("is_open"))
-    dt = parse_candle_time(candle.get("datetime"))
-    if dt is None:
-        return False
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    duration = timedelta(minutes=1 if interval == "1" else 5)
-    return datetime.now(dt.tzinfo) >= dt + duration
+    return False
 
 def completed_candles(candles, interval):
     return [c for c in candles if candle_is_completed(c, interval)]
@@ -579,9 +583,21 @@ def update_pending_results():
 
         _, result_candle = newer[0]
 
-        if not candle_is_completed(result_candle, resolution):
+        # A 1-minute signal is resolved by the next 1-minute candle only
+        # after that candle's full duration has elapsed. Do not rely solely
+        # on the provider's isOpen flag because it may lag briefly.
+        result_time = parse_candle_time(result_candle.get("datetime"))
+        if result_time is None:
             item["tracker_state"] = "WAITING FOR CANDLE CLOSE"
-            item["tracking_error"] = "Result candle is not closed yet."
+            item["tracking_error"] = "Result candle time is unavailable."
+            continue
+        if result_time.tzinfo is None:
+            result_time = result_time.replace(tzinfo=timezone.utc)
+        result_duration = timedelta(minutes=1 if resolution == "1" else 5)
+        if datetime.now(result_time.tzinfo) < result_time + result_duration:
+            remaining = max(0, int((result_time + result_duration - datetime.now(result_time.tzinfo)).total_seconds()))
+            item["tracker_state"] = "WAITING FOR CANDLE CLOSE"
+            item["tracking_error"] = f"Result candle closes in about {remaining}s"
             continue
 
         result_price = float(result_candle["close"])
