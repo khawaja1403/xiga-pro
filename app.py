@@ -555,16 +555,23 @@ def update_pending_results():
             entry_time = entry_time.replace(tzinfo=timezone.utc)
 
         duration = timedelta(minutes=1 if resolution == "1" else 5)
-        expected_result_time = entry_time + duration
-        now = datetime.now(entry_time.tzinfo)
-        item["next_check_at"] = expected_result_time.isoformat()
 
-        if now < expected_result_time:
+        # The signal is generated from the current/most recent candle.
+        # The RESULT is the following candle, so the result is not final
+        # until that following candle has also completely closed.
+        # Therefore the countdown target is entry candle start + 2 durations.
+        result_candle_start = entry_time + duration
+        result_close_time = result_candle_start + duration
+        now = datetime.now(entry_time.tzinfo)
+        item["result_candle_start"] = result_candle_start.isoformat()
+        item["next_check_at"] = result_close_time.isoformat()
+
+        if now < result_close_time:
             remaining = max(
-                0, int((expected_result_time - now).total_seconds())
+                0, int((result_close_time - now).total_seconds())
             )
-            item["tracker_state"] = "WAITING FOR RESULT CANDLE"
-            item["tracking_error"] = f"Result check in about {remaining}s"
+            item["tracker_state"] = "RESULT COUNTDOWN"
+            item["tracking_error"] = f"Result in {remaining}s"
             continue
 
         cache_key = (item["symbol"], resolution)
@@ -762,6 +769,9 @@ if selected_page == "Trade":
             if remaining is not None and remaining > 0:
                 win_display = format_countdown(remaining)
                 win_status = "● RESULT COUNTDOWN"
+            elif remaining == 0 and pending.get("tracker_state") in ("RESULT COUNTDOWN", "WAITING FOR RESULT CANDLE"):
+                win_display = "00:00"
+                win_status = "● CHECKING RESULT"
             elif total:
                 win_display = f"{round(st.session_state.wins / total * 100, 1)}%"
                 win_status = (
