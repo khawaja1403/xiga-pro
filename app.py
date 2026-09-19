@@ -94,143 +94,67 @@ def get_secret(name):
     except Exception:
         return ""
 
-def get_finnhub_key():
-    return get_secret("FINNHUB_API_KEY")
-
-def get_marketaux_key():
-    return get_secret("MARKETAUX_API_KEY")
-
-FOREX_SYMBOLS = {
-    "EUR/USD": "OANDA:EUR_USD",
-    "GBP/USD": "OANDA:GBP_USD",
-    "USD/JPY": "OANDA:USD_JPY",
-    "AUD/USD": "OANDA:AUD_USD",
-    "USD/CAD": "OANDA:USD_CAD",
-    "USD/CHF": "OANDA:USD_CHF",
-    "NZD/USD": "OANDA:NZD_USD",
-    "EUR/JPY": "OANDA:EUR_JPY",
-    "EUR/GBP": "OANDA:EUR_GBP",
-    "GBP/JPY": "OANDA:GBP_JPY",
-    "XAU/USD": "OANDA:XAU_USD",
-    "XAG/USD": "OANDA:XAG_USD",
-    "WTI/USD": "OANDA:WTICO_USD",
-    "BRENT/USD": "OANDA:BCO_USD",
-    "NATGAS/USD": "OANDA:NATGAS_USD",
+# Market data is supplied by BiQuote. Its public read API requires no API key.
+BIQUOTE_BASE = "https://biquote.io/api"
+BIQUOTE_SYMBOLS = {
+    "EUR/USD":"EURUSD","GBP/USD":"GBPUSD","USD/JPY":"USDJPY","AUD/USD":"AUDUSD",
+    "USD/CAD":"USDCAD","USD/CHF":"USDCHF","NZD/USD":"NZDUSD","EUR/JPY":"EURJPY",
+    "EUR/GBP":"EURGBP","GBP/JPY":"GBPJPY",
+    "BTC/USD":"BTCUSD","ETH/USD":"ETHUSD","SOL/USD":"SOLUSD","DOGE/USD":"DOGEUSD",
+    "ADA/USD":"ADAUSD","BNB/USD":"BNBUSD","LINK/USD":"LINKUSD","LTC/USD":"LTCUSD","XRP/USD":"XRPUSD",
+    "XAU/USD":"XAUUSD","XAG/USD":"XAGUSD","WTI/USD":"USOIL","BRENT/USD":"UKOIL","NATGAS/USD":"NATGAS",
+    "SPX":"US500","NDX":"USTEC","DJI":"US30","DAX":"DE40","FTSE":"UK100","N225":"JP225",
+    "AAPL":"AAPL","MSFT":"MSFT","TSLA":"TSLA","AMZN":"AMZN","NVDA":"NVDA","NFLX":"NFLX",
+    "META":"META","V":"V","BA":"BA","PLTR":"PLTR","AMD":"AMD","COIN":"COIN",
 }
 
-CRYPTO_SYMBOLS = {
-    "BTC/USD": "BINANCE:BTCUSDT",
-    "ETH/USD": "BINANCE:ETHUSDT",
-    "SOL/USD": "BINANCE:SOLUSDT",
-    "DOGE/USD": "BINANCE:DOGEUSDT",
-    "ADA/USD": "BINANCE:ADAUSDT",
-    "BNB/USD": "BINANCE:BNBUSDT",
-    "LINK/USD": "BINANCE:LINKUSDT",
-    "LTC/USD": "BINANCE:LTCUSDT",
-    "XRP/USD": "BINANCE:XRPUSDT",
-}
-
-INDEX_SYMBOLS = {
-    "SPX": "^GSPC",
-    "NDX": "^NDX",
-    "DJI": "^DJI",
-    "DAX": "^GDAXI",
-    "FTSE": "^FTSE",
-    "N225": "^N225",
-}
-
-def asset_kind(symbol):
-    if symbol in FOREX_SYMBOLS:
-        return "forex"
-    if symbol in CRYPTO_SYMBOLS:
-        return "crypto"
-    if symbol in INDEX_SYMBOLS:
-        return "index"
-    return "stock"
-
-def api_symbol(symbol):
-    kind = asset_kind(symbol)
-    if kind == "forex":
-        return FOREX_SYMBOLS[symbol]
-    if kind == "crypto":
-        return CRYPTO_SYMBOLS[symbol]
-    if kind == "index":
-        return INDEX_SYMBOLS[symbol]
-    return symbol
-
-def candle_request_path(symbol):
-    kind = asset_kind(symbol)
-    if kind == "forex":
-        return "/forex/candle"
-    if kind == "crypto":
-        return "/crypto/candle"
-    return "/stock/candle"
+def biquote_symbol(symbol):
+    return BIQUOTE_SYMBOLS.get(symbol, symbol.replace("/", ""))
 
 @st.cache_data(ttl=15, show_spinner=False)
 def get_candles_cached(symbol, resolution):
-    key = get_finnhub_key()
-    if not key:
-        return [], "FINNHUB API KEY NOT FOUND"
-
-    now = int(datetime.now(timezone.utc).timestamp())
-    minutes = 180 if resolution == "1" else 900
-    start = now - minutes * 60
-
-    url = "https://finnhub.io/api/v1" + candle_request_path(symbol)
-    params = {
-        "symbol": api_symbol(symbol),
-        "resolution": resolution,
-        "from": start,
-        "to": now,
-        "token": key,
-    }
-
+    interval = "1m" if resolution == "1" else "5m"
+    provider_symbol = biquote_symbol(symbol)
     try:
-        response = requests.get(url, params=params, timeout=15)
-        if response.status_code != 200:
-            return [], f"FINNHUB ERROR {response.status_code}"
-
-        data = response.json()
-        if data.get("s") != "ok":
-            return [], f"FINNHUB {str(data.get('s', 'NO_DATA')).upper()}"
-
-        timestamps = data.get("t", [])
-        opens = data.get("o", [])
-        highs = data.get("h", [])
-        lows = data.get("l", [])
-        closes = data.get("c", [])
-
-        count = min(
-            len(timestamps), len(opens), len(highs),
-            len(lows), len(closes)
+        response = requests.get(
+            f"{BIQUOTE_BASE}/{provider_symbol}/ohlc",
+            params={"interval": interval, "limit": 150},
+            timeout=15,
         )
-
+        if response.status_code != 200:
+            try:
+                body = response.json()
+                message = body.get("message") or body.get("error")
+            except Exception:
+                message = None
+            if response.status_code == 404:
+                return [], f"BIQUOTE SYMBOL NOT FOUND: {provider_symbol}"
+            if response.status_code == 429:
+                return [], "BIQUOTE RATE LIMIT — PLEASE RETRY"
+            return [], f"BIQUOTE ERROR {response.status_code}" + (f": {message}" if message else "")
+        data = response.json()
+        bars = data.get("bars", [])
+        if not isinstance(bars, list) or not bars:
+            return [], f"NO CANDLE DATA FOR {provider_symbol}"
         candles = []
-        for i in range(count):
+        for bar in reversed(bars):
             try:
                 candles.append({
-                    "open": float(opens[i]),
-                    "high": float(highs[i]),
-                    "low": float(lows[i]),
-                    "close": float(closes[i]),
-                    "datetime": datetime.fromtimestamp(
-                        int(timestamps[i]), tz=timezone.utc
-                    ).isoformat(),
+                    "open": float(bar["open"]), "high": float(bar["high"]),
+                    "low": float(bar["low"]), "close": float(bar["close"]),
+                    "datetime": str(bar["openTime"]), "is_open": bool(bar.get("isOpen", False)),
                 })
-            except Exception:
+            except (KeyError, TypeError, ValueError):
                 continue
-
         if len(candles) < 60:
             return [], f"NOT ENOUGH DATA ({len(candles)} CANDLES)"
-
-        return candles, "LIVE DATA CONNECTED"
-
+        return candles, "BIQUOTE MARKET DATA CONNECTED"
     except requests.exceptions.Timeout:
-        return [], "MARKET DATA TIMEOUT"
+        return [], "BIQUOTE MARKET DATA TIMEOUT"
     except requests.exceptions.RequestException:
-        return [], "MARKET DATA NETWORK ERROR"
+        return [], "BIQUOTE NETWORK ERROR"
     except Exception as exc:
-        return [], f"MARKET DATA ERROR: {exc}"
+        return [], f"BIQUOTE DATA ERROR: {exc}"
 
 def get_candles(symbol, resolution):
     return get_candles_cached(symbol, resolution)
@@ -381,12 +305,13 @@ def parse_candle_time(value):
     return None
 
 def candle_is_completed(candle, interval):
+    if "is_open" in candle:
+        return not bool(candle.get("is_open"))
     dt = parse_candle_time(candle.get("datetime"))
     if dt is None:
         return False
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-
     duration = timedelta(minutes=1 if interval == "1" else 5)
     return datetime.now(dt.tzinfo) >= dt + duration
 
