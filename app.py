@@ -159,6 +159,12 @@ def get_candles_cached(symbol, resolution):
 def get_candles(symbol, resolution):
     return get_candles_cached(symbol, resolution)
 
+def get_marketaux_key():
+    try:
+        return st.secrets.get("MARKETAUX_API_KEY", "")
+    except Exception:
+        return ""
+
 NEWS_SYMBOLS = {
     "EUR/USD": "EUR", "GBP/USD": "GBP", "USD/JPY": "JPY",
     "AUD/USD": "AUD", "USD/CAD": "CAD", "USD/CHF": "CHF",
