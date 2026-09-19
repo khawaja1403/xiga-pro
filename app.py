@@ -574,8 +574,16 @@ def update_pending_results():
             item["tracking_error"] = f"Result in {remaining}s"
             continue
 
+        expected_result_time = result_candle_start
+
         cache_key = (item["symbol"], resolution)
         if cache_key not in candle_cache:
+            # The analysis request is cached briefly, but the result candle
+            # must be fetched fresh when the countdown finishes.
+            try:
+                get_candles_cached.clear()
+            except Exception:
+                pass
             candle_cache[cache_key] = get_candles(
                 item["symbol"], resolution
             )
@@ -768,7 +776,8 @@ if selected_page == "Trade":
             remaining = get_pending_countdown(pending)
             if remaining is not None and remaining > 0:
                 win_display = format_countdown(remaining)
-                win_status = "● RESULT COUNTDOWN"
+                unit = "1 MIN" if pending.get("timeframe") == "1 MIN" else "5 MIN"
+                win_status = f"● {unit} RESULT COUNTDOWN"
             elif remaining == 0 and pending.get("tracker_state") in ("RESULT COUNTDOWN", "WAITING FOR RESULT CANDLE"):
                 win_display = "00:00"
                 win_status = "● CHECKING RESULT"
@@ -800,10 +809,14 @@ if selected_page == "Trade":
         tracker_line = ""
         if pending_items:
             p = pending_items[0]
+            countdown_text = ""
+            remaining = get_pending_countdown(p)
+            if remaining is not None and remaining > 0:
+                countdown_text = f' • {format_countdown(remaining)} remaining'
             tracker_line = (
                 '<div style="color:#6f8499;font-size:7px;margin-top:6px;">'
                 f'TRACKER: {p.get("tracker_state","STARTING")} • '
-                f'{p.get("tracker_last_check","—")}'
+                f'{p.get("tracker_last_check","—")}{countdown_text}'
                 "</div>"
             )
 
