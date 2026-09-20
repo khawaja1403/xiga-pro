@@ -83,7 +83,7 @@ BIQUOTE_BASE = "https://biquote.io/api"
 BINANCE_BASE = "https://data-api.binance.vision"
 BITGET_BASE = "https://api.bitget.com"
 OKX_BASE = "https://www.okx.com"
-BYBIT_BASE = "https://api.bybit.com"
+BYBIT_BASE = "https://api.bytick.com"
 
 # Multi-user cache settings: identical market requests are shared across sessions.
 # Short TTLs reduce duplicate requests for ~50 simultaneous users while keeping prices fresh.
