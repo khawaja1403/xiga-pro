@@ -51,6 +51,12 @@ def get_secret(name):
 # Market data is supplied by BiQuote. Its public read API requires no API key.
 BIQUOTE_BASE = "https://biquote.io/api"
 
+# Multi-user cache settings: identical market requests are shared across sessions.
+# These short TTLs reduce duplicate API calls without making the UI feel stale.
+CANDLE_CACHE_SECONDS = 10
+TICK_CACHE_SECONDS = 2
+NEWS_CACHE_SECONDS = 600
+
 @st.cache_data(ttl=900, show_spinner=False)
 def get_symbol_catalog():
     try:
@@ -80,7 +86,7 @@ def get_symbol_catalog():
     except Exception as exc:
         return ASSETS_FALLBACK, f"CATALOG ERROR • USING FALLBACK: {exc}"
 
-@st.cache_data(ttl=15, show_spinner=False)
+@st.cache_data(ttl=CANDLE_CACHE_SECONDS, show_spinner=False)
 def get_candles_cached(provider_symbol, resolution):
     interval = "1m" if resolution == "1" else "5m"
     try:
@@ -104,12 +110,13 @@ def get_candles_cached(provider_symbol, resolution):
     except Exception as exc: return [], f"BIQUOTE DATA ERROR: {exc}"
 
 def get_candles(symbol, resolution, fresh=False):
-    if fresh:
-        try: get_candles_cached.clear()
-        except Exception: pass
+    # Keep the shared cache intact. Clearing a global Streamlit cache here would
+    # invalidate data for every connected user at once. A short TTL provides
+    # fresh market data while allowing identical requests from many users to
+    # reuse the same BiQuote response.
     return get_candles_cached(symbol, resolution)
 
-@st.cache_data(ttl=2, show_spinner=False)
+@st.cache_data(ttl=TICK_CACHE_SECONDS, show_spinner=False)
 def get_latest_tick(provider_symbol):
     try:
         r=requests.get(f"{BIQUOTE_BASE}/{provider_symbol}",timeout=10)
@@ -135,7 +142,7 @@ NEWS_SYMBOLS = {
     "WTI/USD": "WTI", "BRENT/USD": "BRENT", "NATGAS/USD": "NATGAS",
 }
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=NEWS_CACHE_SECONDS, show_spinner=False)
 def get_market_news(symbol):
     key = get_marketaux_key()
     if not key:
@@ -491,7 +498,7 @@ def resolve_trade_if_ready():
     if tick:
         result_price = float(tick["price"])
     else:
-        candles, candle_status = get_candles(pending["symbol"], TIMEFRAMES[pending["timeframe"]], fresh=True)
+        candles, candle_status = get_candles(pending["symbol"], TIMEFRAMES[pending["timeframe"]])
         if not candles:
             pending["state"] = "RESULT ERROR"; pending["error"] = f"{status}; {candle_status}"; return
         closed = completed_candles(candles, TIMEFRAMES[pending["timeframe"]])
