@@ -83,13 +83,19 @@ BIQUOTE_BASE = "https://biquote.io/api"
 BINANCE_BASE = "https://data-api.binance.vision"
 BITGET_BASE = "https://api.bitget.com"
 OKX_BASE = "https://www.okx.com"
-BYBIT_BASE = "https://api.bytick.com"
+BYBIT_BASE = "https://api.bybit.com"
 
 # Multi-user cache settings: identical market requests are shared across sessions.
 # Short TTLs reduce duplicate requests for ~50 simultaneous users while keeping prices fresh.
 CANDLE_CACHE_SECONDS = 10
 TICK_CACHE_SECONDS = 2
 NEWS_CACHE_SECONDS = 600
+
+# Normal headers for public exchange market-data requests.
+PUBLIC_API_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (XIGA Market Analysis)",
+    "Accept": "application/json",
+}
 
 @st.cache_data(ttl=900, show_spinner=False)
 def get_symbol_catalog():
@@ -167,11 +173,17 @@ def get_candles_cached(provider, provider_symbol, resolution):
         elif provider == "OKX":
             r=requests.get(f"{OKX_BASE}/api/v5/market/candles",params={"instId":provider_symbol,"bar":interval,"limit":150},timeout=15)
         elif provider == "Bybit":
-            r=requests.get(f"{BYBIT_BASE}/v5/market/kline",params={"category":"spot","symbol":provider_symbol,"interval":resolution,"limit":150},timeout=15)
+            r=requests.get(f"{BYBIT_BASE}/v5/market/kline",params={"category":"spot","symbol":provider_symbol,"interval":resolution,"limit":150},headers=PUBLIC_API_HEADERS,timeout=15)
         else:
             return [], "UNKNOWN MARKET PROVIDER"
         if r.status_code != 200:
-            return [], f"{provider.upper()} ERROR {r.status_code}"
+            detail = ""
+            if provider == "Bybit":
+                try:
+                    detail = f" • {r.json().get('retMsg', '')}"
+                except Exception:
+                    pass
+            return [], f"{provider.upper()} ERROR {r.status_code}{detail}"
         raw=r.json()
         candles=_parse_exchange_candles(provider,raw,resolution)
         if len(candles)<60: return [], f"NOT ENOUGH {provider.upper()} CANDLES ({len(candles)})"
@@ -213,8 +225,14 @@ def get_latest_tick(provider, provider_symbol):
             if not data: return None,"OKX NO LIVE PRICE"
             return {"price":float(data[0]["last"])},"OKX LIVE PRICE CONNECTED"
         if provider == "Bybit":
-            r=requests.get(f"{BYBIT_BASE}/v5/market/tickers",params={"category":"spot","symbol":provider_symbol},timeout=10)
-            if r.status_code!=200: return None,f"BYBIT TICK ERROR {r.status_code}"
+            r=requests.get(f"{BYBIT_BASE}/v5/market/tickers",params={"category":"spot","symbol":provider_symbol},headers=PUBLIC_API_HEADERS,timeout=10)
+            if r.status_code!=200:
+                detail = ""
+                try:
+                    detail = f" • {r.json().get("retMsg", "")}"
+                except Exception:
+                    pass
+                return None,f"BYBIT TICK ERROR {r.status_code}{detail}"
             data=r.json().get("result",{}).get("list",[])
             if not data: return None,"BYBIT NO LIVE PRICE"
             return {"price":float(data[0]["lastPrice"])},"BYBIT LIVE PRICE CONNECTED"
