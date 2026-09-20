@@ -692,7 +692,7 @@ if selected_page == "Trade":
                 entry_tick, entry_status = get_latest_tick(symbol)
                 entry_price = float(entry_tick["price"]) if entry_tick else float(analysis.get("price", 0))
                 duration_minutes = 1 if tf == "1 MIN" else 5
-                start = datetime.now(timezone.utc)
+                start = datetime.now(ZoneInfo("Asia/Karachi"))
                 trade_id = analysis_pending["id"]
                 st.session_state.trade_pending = {
                     "id": trade_id, "asset": analysis_pending["asset"], "symbol": symbol,
