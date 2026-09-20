@@ -80,7 +80,7 @@ def get_secret(name):
 
 # Market data providers. Public read-only market data is used; no trading API keys are needed.
 BIQUOTE_BASE = "https://biquote.io/api"
-BINANCE_BASE = "https://api.binance.com"
+BINANCE_BASE = "https://data-api.binance.vision"
 BITGET_BASE = "https://api.bitget.com"
 OKX_BASE = "https://www.okx.com"
 BYBIT_BASE = "https://api.bybit.com"
