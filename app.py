@@ -40,6 +40,36 @@ ASSETS_FALLBACK = {
     "Commodities": {"Gold (XAUUSD)":"XAUUSD","Silver (XAGUSD)":"XAGUSD","WTI Oil (USOIL)":"USOIL","Brent Oil (UKOIL)":"UKOIL","Natural Gas (NATGAS)":"NATGAS"},
     "Indices": {"S&P 500 (US500)":"US500","NASDAQ 100 (USTEC)":"USTEC","Dow Jones (US30)":"US30","DAX (DE40)":"DE40","FTSE 100 (UK100)":"UK100","Nikkei 225 (JP225)":"JP225"},
 }
+
+EXCHANGE_ASSETS = {
+    "Binance": {
+        "Bitcoin (BTC/USDT)":"BTCUSDT", "Ethereum (ETH/USDT)":"ETHUSDT", "Solana (SOL/USDT)":"SOLUSDT",
+        "BNB (BNB/USDT)":"BNBUSDT", "XRP (XRP/USDT)":"XRPUSDT", "Dogecoin (DOGE/USDT)":"DOGEUSDT",
+        "Cardano (ADA/USDT)":"ADAUSDT", "Chainlink (LINK/USDT)":"LINKUSDT", "Avalanche (AVAX/USDT)":"AVAXUSDT",
+        "Tron (TRX/USDT)":"TRXUSDT", "Sui (SUI/USDT)":"SUIUSDT", "Polkadot (DOT/USDT)":"DOTUSDT",
+    },
+    "Bitget": {
+        "Bitcoin (BTC/USDT)":"BTCUSDT", "Ethereum (ETH/USDT)":"ETHUSDT", "Solana (SOL/USDT)":"SOLUSDT",
+        "BNB (BNB/USDT)":"BNBUSDT", "XRP (XRP/USDT)":"XRPUSDT", "Dogecoin (DOGE/USDT)":"DOGEUSDT",
+        "Cardano (ADA/USDT)":"ADAUSDT", "Chainlink (LINK/USDT)":"LINKUSDT", "Avalanche (AVAX/USDT)":"AVAXUSDT",
+        "Sui (SUI/USDT)":"SUIUSDT", "Polkadot (DOT/USDT)":"DOTUSDT", "Litecoin (LTC/USDT)":"LTCUSDT",
+    },
+    "OKX": {
+        "Bitcoin (BTC/USDT)":"BTC-USDT", "Ethereum (ETH/USDT)":"ETH-USDT", "Solana (SOL/USDT)":"SOL-USDT",
+        "BNB (BNB/USDT)":"BNB-USDT", "XRP (XRP/USDT)":"XRP-USDT", "Dogecoin (DOGE/USDT)":"DOGE-USDT",
+        "Cardano (ADA/USDT)":"ADA-USDT", "Chainlink (LINK/USDT)":"LINK-USDT", "Avalanche (AVAX/USDT)":"AVAX-USDT",
+        "Sui (SUI/USDT)":"SUI-USDT", "Polkadot (DOT/USDT)":"DOT-USDT", "Litecoin (LTC/USDT)":"LTC-USDT",
+    },
+    "Bybit": {
+        "Bitcoin (BTC/USDT)":"BTCUSDT", "Ethereum (ETH/USDT)":"ETHUSDT", "Solana (SOL/USDT)":"SOLUSDT",
+        "BNB (BNB/USDT)":"BNBUSDT", "XRP (XRP/USDT)":"XRPUSDT", "Dogecoin (DOGE/USDT)":"DOGEUSDT",
+        "Cardano (ADA/USDT)":"ADAUSDT", "Chainlink (LINK/USDT)":"LINKUSDT", "Avalanche (AVAX/USDT)":"AVAXUSDT",
+        "Sui (SUI/USDT)":"SUIUSDT", "Polkadot (DOT/USDT)":"DOTUSDT", "Litecoin (LTC/USDT)":"LTCUSDT",
+    },
+}
+
+EXCHANGE_PROVIDERS = ["BiQuote", "Binance", "Bitget", "OKX", "Bybit"]
+
 TIMEFRAMES = {"1 MIN": "1", "5 MIN": "5"}
 
 def get_secret(name):
@@ -48,11 +78,15 @@ def get_secret(name):
     except Exception:
         return ""
 
-# Market data is supplied by BiQuote. Its public read API requires no API key.
+# Market data providers. Public read-only market data is used; no trading API keys are needed.
 BIQUOTE_BASE = "https://biquote.io/api"
+BINANCE_BASE = "https://api.binance.com"
+BITGET_BASE = "https://api.bitget.com"
+OKX_BASE = "https://www.okx.com"
+BYBIT_BASE = "https://api.bybit.com"
 
 # Multi-user cache settings: identical market requests are shared across sessions.
-# These short TTLs reduce duplicate API calls without making the UI feel stale.
+# Short TTLs reduce duplicate requests for ~50 simultaneous users while keeping prices fresh.
 CANDLE_CACHE_SECONDS = 10
 TICK_CACHE_SECONDS = 2
 NEWS_CACHE_SECONDS = 600
@@ -86,47 +120,109 @@ def get_symbol_catalog():
     except Exception as exc:
         return ASSETS_FALLBACK, f"CATALOG ERROR • USING FALLBACK: {exc}"
 
+def _parse_exchange_candles(provider, raw, resolution):
+    candles=[]
+    try:
+        if provider == "Binance":
+            rows = raw
+            for row in reversed(rows):
+                candles.append({"open":float(row[1]),"high":float(row[2]),"low":float(row[3]),"close":float(row[4]),"datetime":datetime.fromtimestamp(row[0]/1000, tz=timezone.utc).isoformat(),"is_open":datetime.now(timezone.utc).timestamp()*1000 < row[6]})
+        elif provider == "Bitget":
+            rows = raw.get("data", [])
+            for row in reversed(rows):
+                candles.append({"open":float(row[1]),"high":float(row[2]),"low":float(row[3]),"close":float(row[4]),"datetime":datetime.fromtimestamp(int(row[0])/1000, tz=timezone.utc).isoformat(),"is_open":False})
+        elif provider == "OKX":
+            rows = raw.get("data", [])
+            for row in reversed(rows):
+                candles.append({"open":float(row[1]),"high":float(row[2]),"low":float(row[3]),"close":float(row[4]),"datetime":datetime.fromtimestamp(int(row[0])/1000, tz=timezone.utc).isoformat(),"is_open":str(row[8]) != "1" if len(row)>8 else False})
+        elif provider == "Bybit":
+            rows = raw.get("result", {}).get("list", [])
+            for row in reversed(rows):
+                candles.append({"open":float(row[1]),"high":float(row[2]),"low":float(row[3]),"close":float(row[4]),"datetime":datetime.fromtimestamp(int(row[0])/1000, tz=timezone.utc).isoformat(),"is_open":False})
+    except (TypeError, ValueError, IndexError, KeyError):
+        return []
+    return candles
+
 @st.cache_data(ttl=CANDLE_CACHE_SECONDS, show_spinner=False)
-def get_candles_cached(provider_symbol, resolution):
+def get_candles_cached(provider, provider_symbol, resolution):
     interval = "1m" if resolution == "1" else "5m"
     try:
-        response = requests.get(f"{BIQUOTE_BASE}/{provider_symbol}/ohlc", params={"interval": interval, "limit": 150}, timeout=15)
-        if response.status_code != 200:
-            try: message = response.json().get("message") or response.json().get("error")
-            except Exception: message = None
-            if response.status_code == 404: return [], f"BIQUOTE SYMBOL NOT FOUND: {provider_symbol}"
-            if response.status_code == 429: return [], "BIQUOTE RATE LIMIT — PLEASE RETRY"
-            return [], f"BIQUOTE ERROR {response.status_code}" + (f": {message}" if message else "")
-        bars = response.json().get("bars", [])
-        candles=[]
-        for bar in reversed(bars):
-            try:
-                candles.append({"open":float(bar["open"]),"high":float(bar["high"]),"low":float(bar["low"]),"close":float(bar["close"]),"datetime":str(bar["openTime"]),"is_open":bool(bar.get("isOpen",False))})
-            except (KeyError,TypeError,ValueError): pass
-        if len(candles)<60: return [], f"NOT ENOUGH DATA ({len(candles)} CANDLES)"
-        return candles, "BIQUOTE MARKET DATA CONNECTED"
-    except requests.exceptions.Timeout: return [], "BIQUOTE MARKET DATA TIMEOUT"
-    except requests.exceptions.RequestException: return [], "BIQUOTE NETWORK ERROR"
-    except Exception as exc: return [], f"BIQUOTE DATA ERROR: {exc}"
+        if provider == "BiQuote":
+            response = requests.get(f"{BIQUOTE_BASE}/{provider_symbol}/ohlc", params={"interval":interval,"limit":150}, timeout=15)
+            if response.status_code != 200:
+                return [], f"BIQUOTE ERROR {response.status_code}"
+            bars=response.json().get("bars",[])
+            candles=[]
+            for bar in reversed(bars):
+                try:
+                    candles.append({"open":float(bar["open"]),"high":float(bar["high"]),"low":float(bar["low"]),"close":float(bar["close"]),"datetime":str(bar["openTime"]),"is_open":bool(bar.get("isOpen",False))})
+                except (KeyError,TypeError,ValueError): pass
+            if len(candles)<60: return [], f"NOT ENOUGH DATA ({len(candles)} CANDLES)"
+            return candles, "BIQUOTE MARKET DATA CONNECTED"
 
-def get_candles(symbol, resolution, fresh=False):
-    # Keep the shared cache intact. Clearing a global Streamlit cache here would
-    # invalidate data for every connected user at once. A short TTL provides
-    # fresh market data while allowing identical requests from many users to
-    # reuse the same BiQuote response.
-    return get_candles_cached(symbol, resolution)
+        if provider == "Binance":
+            r=requests.get(f"{BINANCE_BASE}/api/v3/klines",params={"symbol":provider_symbol,"interval":interval,"limit":150},timeout=15)
+        elif provider == "Bitget":
+            r=requests.get(f"{BITGET_BASE}/api/v3/market/candles",params={"category":"SPOT","symbol":provider_symbol,"interval":interval,"limit":150},timeout=15)
+        elif provider == "OKX":
+            r=requests.get(f"{OKX_BASE}/api/v5/market/candles",params={"instId":provider_symbol,"bar":interval,"limit":150},timeout=15)
+        elif provider == "Bybit":
+            r=requests.get(f"{BYBIT_BASE}/v5/market/kline",params={"category":"spot","symbol":provider_symbol,"interval":resolution,"limit":150},timeout=15)
+        else:
+            return [], "UNKNOWN MARKET PROVIDER"
+        if r.status_code != 200:
+            return [], f"{provider.upper()} ERROR {r.status_code}"
+        raw=r.json()
+        candles=_parse_exchange_candles(provider,raw,resolution)
+        if len(candles)<60: return [], f"NOT ENOUGH {provider.upper()} CANDLES ({len(candles)})"
+        return candles, f"{provider.upper()} MARKET DATA CONNECTED"
+    except requests.exceptions.Timeout:
+        return [], f"{provider.upper()} MARKET DATA TIMEOUT"
+    except requests.exceptions.RequestException:
+        return [], f"{provider.upper()} NETWORK ERROR"
+    except Exception as exc:
+        return [], f"{provider.upper()} DATA ERROR: {exc}"
+
+def get_candles(provider, symbol, resolution, fresh=False):
+    return get_candles_cached(provider, symbol, resolution)
 
 @st.cache_data(ttl=TICK_CACHE_SECONDS, show_spinner=False)
-def get_latest_tick(provider_symbol):
+def get_latest_tick(provider, provider_symbol):
     try:
-        r=requests.get(f"{BIQUOTE_BASE}/{provider_symbol}",timeout=10)
-        if r.status_code!=200: return None, f"BIQUOTE TICK ERROR {r.status_code}"
-        data=r.json(); price=data.get("mid")
-        if price is None: price=data.get("last") or data.get("bid") or data.get("ask")
-        if price is None: return None,"NO LIVE PRICE"
-        return {"price":float(price),"timestamp":data.get("timestamp"),"market_state":data.get("marketState"),"stale":bool(data.get("stale",False))},"BIQUOTE LIVE PRICE CONNECTED"
-    except requests.exceptions.RequestException: return None,"BIQUOTE TICK NETWORK ERROR"
-    except Exception as exc: return None,f"BIQUOTE TICK ERROR: {exc}"
+        if provider == "BiQuote":
+            r=requests.get(f"{BIQUOTE_BASE}/{provider_symbol}",timeout=10)
+            if r.status_code!=200: return None, f"BIQUOTE TICK ERROR {r.status_code}"
+            data=r.json(); price=data.get("mid")
+            if price is None: price=data.get("last") or data.get("bid") or data.get("ask")
+            if price is None: return None,"NO LIVE PRICE"
+            return {"price":float(price),"timestamp":data.get("timestamp"),"market_state":data.get("marketState"),"stale":bool(data.get("stale",False))},"BIQUOTE LIVE PRICE CONNECTED"
+        if provider == "Binance":
+            r=requests.get(f"{BINANCE_BASE}/api/v3/ticker/price",params={"symbol":provider_symbol},timeout=10)
+            if r.status_code!=200: return None,f"BINANCE TICK ERROR {r.status_code}"
+            return {"price":float(r.json()["price"])},"BINANCE LIVE PRICE CONNECTED"
+        if provider == "Bitget":
+            r=requests.get(f"{BITGET_BASE}/api/v3/market/tickers",params={"category":"SPOT","symbol":provider_symbol},timeout=10)
+            if r.status_code!=200: return None,f"BITGET TICK ERROR {r.status_code}"
+            data=r.json().get("data",[])
+            if not data: return None,"BITGET NO LIVE PRICE"
+            return {"price":float(data[0].get("lastPr") or data[0].get("last") or data[0].get("bidPr"))},"BITGET LIVE PRICE CONNECTED"
+        if provider == "OKX":
+            r=requests.get(f"{OKX_BASE}/api/v5/market/ticker",params={"instId":provider_symbol},timeout=10)
+            if r.status_code!=200: return None,f"OKX TICK ERROR {r.status_code}"
+            data=r.json().get("data",[])
+            if not data: return None,"OKX NO LIVE PRICE"
+            return {"price":float(data[0]["last"])},"OKX LIVE PRICE CONNECTED"
+        if provider == "Bybit":
+            r=requests.get(f"{BYBIT_BASE}/v5/market/tickers",params={"category":"spot","symbol":provider_symbol},timeout=10)
+            if r.status_code!=200: return None,f"BYBIT TICK ERROR {r.status_code}"
+            data=r.json().get("result",{}).get("list",[])
+            if not data: return None,"BYBIT NO LIVE PRICE"
+            return {"price":float(data[0]["lastPrice"])},"BYBIT LIVE PRICE CONNECTED"
+        return None,"UNKNOWN MARKET PROVIDER"
+    except requests.exceptions.RequestException:
+        return None,f"{provider.upper()} TICK NETWORK ERROR"
+    except Exception as exc:
+        return None,f"{provider.upper()} TICK ERROR: {exc}"
 
 def get_marketaux_key():
     try:
@@ -297,7 +393,7 @@ def candle_is_completed(candle, interval):
 def completed_candles(candles, interval):
     return [c for c in candles if candle_is_completed(c, interval)]
 
-def analyze_market(symbol, timeframe):
+def analyze_market(provider, symbol, timeframe):
     resolution = TIMEFRAMES.get(timeframe)
     if resolution is None:
         return {
@@ -308,7 +404,7 @@ def analyze_market(symbol, timeframe):
             "status": "TIMEFRAME UNAVAILABLE",
         }
 
-    candles, market_status = get_candles(symbol, resolution)
+    candles, market_status = get_candles(provider, symbol, resolution)
     if len(candles) < 61:
         return {
             "success": False,
@@ -396,7 +492,7 @@ def analyze_market(symbol, timeframe):
             score -= 1
             reasons.append("Recent momentum is bearish")
 
-    news = get_market_news(symbol)
+    news = get_market_news(symbol) if provider == "BiQuote" else {"sentiment": 0.0, "articles": 0, "status": "EXCHANGE MARKET DATA • NEWS NOT USED"}
     sentiment = float(news.get("sentiment", 0.0))
     news_count = int(news.get("articles", 0))
 
@@ -494,11 +590,11 @@ def seconds_until(iso_value):
 def resolve_trade_if_ready():
     pending = st.session_state.get("trade_pending")
     if not pending or seconds_until(pending.get("complete_at")) > 0: return
-    tick, status = get_latest_tick(pending["symbol"])
+    tick, status = get_latest_tick(pending["provider"], pending["symbol"])
     if tick:
         result_price = float(tick["price"])
     else:
-        candles, candle_status = get_candles(pending["symbol"], TIMEFRAMES[pending["timeframe"]])
+        candles, candle_status = get_candles(pending["provider"], pending["symbol"], TIMEFRAMES[pending["timeframe"]])
         if not candles:
             pending["state"] = "RESULT ERROR"; pending["error"] = f"{status}; {candle_status}"; return
         closed = completed_candles(candles, TIMEFRAMES[pending["timeframe"]])
@@ -562,28 +658,38 @@ if selected_page == "Trade":
     @st.fragment(run_every="1s")
     def trade_page():
         resolve_trade_if_ready()
-        category_options = list(ASSETS.keys())
-        default_category = st.session_state.get("category", category_options[0])
-        if default_category not in category_options:
-            default_category = category_options[0]
+        provider_options = EXCHANGE_PROVIDERS
+        current_provider = st.session_state.get("provider", "BiQuote")
+        if current_provider not in provider_options:
+            current_provider = "BiQuote"
 
         st.markdown('<div class="xiga-card">', unsafe_allow_html=True)
         col1, col2 = st.columns(2)
         with col1:
-            category = st.selectbox("Asset", category_options, index=category_options.index(default_category), key="category")
-        asset_map = ASSETS.get(category) or {}
+            provider = st.selectbox("Platform", provider_options, index=provider_options.index(current_provider), key="provider")
+        if provider == "BiQuote":
+            category_options = list(ASSETS.keys())
+            default_category = st.session_state.get("category", category_options[0])
+            if default_category not in category_options: default_category = category_options[0]
+            with col2:
+                category = st.selectbox("Asset", category_options, index=category_options.index(default_category), key="category")
+            asset_map = ASSETS.get(category) or {}
+        else:
+            asset_map = EXCHANGE_ASSETS[provider]
+            with col2:
+                st.selectbox("Asset Type", ["Crypto / USDT"], disabled=True, key=f"asset_type_{provider}")
+
         asset_names = list(asset_map.keys())
         if not asset_names:
-            st.error("No instruments are currently available in this category.")
+            st.error("No instruments are currently available for this platform.")
             st.markdown("</div>", unsafe_allow_html=True)
             return
         current_asset = st.session_state.get("asset")
-        if current_asset not in asset_names:
-            current_asset = asset_names[0]
-        with col2:
-            display_asset = st.selectbox("Market", asset_names, index=asset_names.index(current_asset), key="asset")
+        if current_asset not in asset_names: current_asset = asset_names[0]
+        display_asset = st.selectbox("Market", asset_names, index=asset_names.index(current_asset), key="asset")
         timeframe = st.selectbox("Timeframe", list(TIMEFRAMES.keys()), index=0, key="timeframe")
-        st.markdown(f'<div class="xiga-market-status">● LIVE MARKET READY • {catalog_status}</div>', unsafe_allow_html=True)
+        provider_note = "BiQuote live market data" if provider == "BiQuote" else f"{provider} live exchange market data"
+        st.markdown(f'<div class="xiga-market-status">● LIVE MARKET READY • {provider_note} • {catalog_status if provider == "BiQuote" else "PUBLIC API"}</div>', unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
         result = st.session_state.result
@@ -662,10 +768,11 @@ if selected_page == "Trade":
         analyze_clicked = st.button("⚡ ANALYZE MARKET", key="analyze_button", use_container_width=True, disabled=busy)
         if analyze_clicked:
             symbol = asset_map[display_asset]
+            selected_provider = provider
             duration_minutes = 1 if timeframe == "1 MIN" else 5
             now_utc = datetime.now(timezone.utc)
             st.session_state.analysis_pending = {
-                "id": now_utc.isoformat(), "asset": clean_asset, "symbol": symbol,
+                "id": now_utc.isoformat(), "asset": clean_asset, "symbol": symbol, "provider": selected_provider,
                 "timeframe": timeframe, "started_at": now_utc.isoformat(),
                 "complete_at": (now_utc + timedelta(minutes=duration_minutes)).isoformat(),
             }
@@ -680,38 +787,39 @@ if selected_page == "Trade":
         analysis_pending = st.session_state.get("analysis_pending")
         if analysis_pending and seconds_until(analysis_pending.get("complete_at")) <= 0:
             symbol = analysis_pending["symbol"]
+            selected_provider = analysis_pending.get("provider", "BiQuote")
             tf = analysis_pending["timeframe"]
             with st.spinner("Finalizing market analysis..."):
-                analysis = analyze_market(symbol, tf)
+                analysis = analyze_market(selected_provider, symbol, tf)
             st.session_state.result = analysis
             st.session_state.analysis_pending = None
             if analysis.get("success"):
                 st.session_state.signals += 1
 
             if analysis.get("success") and analysis.get("signal") in ("CALL", "PUT"):
-                entry_tick, entry_status = get_latest_tick(symbol)
+                entry_tick, entry_status = get_latest_tick(selected_provider, symbol)
                 entry_price = float(entry_tick["price"]) if entry_tick else float(analysis.get("price", 0))
                 duration_minutes = 1 if tf == "1 MIN" else 5
                 start = datetime.now(ZoneInfo("Asia/Karachi"))
                 trade_id = analysis_pending["id"]
                 st.session_state.trade_pending = {
-                    "id": trade_id, "asset": analysis_pending["asset"], "symbol": symbol,
+                    "id": trade_id, "asset": analysis_pending["asset"], "symbol": symbol, "provider": selected_provider,
                     "timeframe": tf, "signal": analysis["signal"],
                     "probability": int(analysis.get("probability", 50)), "entry_price": entry_price,
                     "started_at": start.isoformat(), "complete_at": (start + timedelta(minutes=duration_minutes)).isoformat(),
                     "state": "TRADE COUNTDOWN", "error": "",
                 }
                 st.session_state.history.insert(0, {
-                    "id": trade_id, "asset": analysis_pending["asset"], "symbol": symbol,
+                    "id": trade_id, "asset": analysis_pending["asset"], "symbol": symbol, "provider": selected_provider,
                     "signal": analysis["signal"], "strength": analysis.get("strength", 0),
                     "probability": analysis.get("probability", 50), "price": entry_price,
-                    "timeframe": tf, "time": start.strftime("%Y-%m-%d %H:%M:%S PKT"),
+                    "timeframe": tf, "time": start.strftime("%Y-%m-%d %H:%M:%S PKT"), "provider": selected_provider,
                     "status": "PENDING", "result_price": "—",
                     "analysis_description": analysis.get("description", ""), "entry_status": entry_status,
                 })
             st.rerun()
 
-        st.markdown('<div class="xiga-footer">🔒 SECURE • XIGA AI • V5.3 • LIVE ANALYSIS</div>', unsafe_allow_html=True)
+        st.markdown('<div class="xiga-footer">🔒 SECURE • XIGA AI • V5.4 • MULTI-EXCHANGE ANALYSIS</div>', unsafe_allow_html=True)
 
     trade_page()
 
@@ -726,6 +834,8 @@ elif selected_page == "History":
             st.markdown(
                 f"""
 **{item["asset"]}**
+
+Platform: **{item.get("provider", "BiQuote")}**
 
 Signal: **{item["signal"]}**
 
