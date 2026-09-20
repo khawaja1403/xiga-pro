@@ -413,7 +413,8 @@ def historical_setup_stats(candles, resolution, lookahead=None, max_samples=90):
     wins = losses = draws = 0
     samples = 0
 
-    for i in range(start_i, len(usable)):
+    # Stop early enough to leave a valid future candle for lookahead.
+    for i in range(start_i, len(usable) - lookahead):
         window = usable[:i + 1]
         closes = [float(c["close"]) for c in window]
         if len(closes) < 55:
