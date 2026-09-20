@@ -60,15 +60,9 @@ EXCHANGE_ASSETS = {
         "Cardano (ADA/USDT)":"ADA-USDT", "Chainlink (LINK/USDT)":"LINK-USDT", "Avalanche (AVAX/USDT)":"AVAX-USDT",
         "Sui (SUI/USDT)":"SUI-USDT", "Polkadot (DOT/USDT)":"DOT-USDT", "Litecoin (LTC/USDT)":"LTC-USDT",
     },
-    "Bybit": {
-        "Bitcoin (BTC/USDT)":"BTCUSDT", "Ethereum (ETH/USDT)":"ETHUSDT", "Solana (SOL/USDT)":"SOLUSDT",
-        "BNB (BNB/USDT)":"BNBUSDT", "XRP (XRP/USDT)":"XRPUSDT", "Dogecoin (DOGE/USDT)":"DOGEUSDT",
-        "Cardano (ADA/USDT)":"ADAUSDT", "Chainlink (LINK/USDT)":"LINKUSDT", "Avalanche (AVAX/USDT)":"AVAXUSDT",
-        "Sui (SUI/USDT)":"SUIUSDT", "Polkadot (DOT/USDT)":"DOTUSDT", "Litecoin (LTC/USDT)":"LTCUSDT",
-    },
 }
 
-EXCHANGE_PROVIDERS = ["BiQuote", "Binance", "Bitget", "OKX", "Bybit"]
+EXCHANGE_PROVIDERS = ["BiQuote", "Binance", "Bitget", "OKX"]
 
 TIMEFRAMES = {"1 MIN": "1", "5 MIN": "5"}
 
@@ -83,19 +77,12 @@ BIQUOTE_BASE = "https://biquote.io/api"
 BINANCE_BASE = "https://data-api.binance.vision"
 BITGET_BASE = "https://api.bitget.com"
 OKX_BASE = "https://www.okx.com"
-BYBIT_BASE = "https://api.bybit.com"
 
 # Multi-user cache settings: identical market requests are shared across sessions.
 # Short TTLs reduce duplicate requests for ~50 simultaneous users while keeping prices fresh.
 CANDLE_CACHE_SECONDS = 10
 TICK_CACHE_SECONDS = 2
 NEWS_CACHE_SECONDS = 600
-
-# Normal headers for public exchange market-data requests.
-PUBLIC_API_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (XIGA Market Analysis)",
-    "Accept": "application/json",
-}
 
 @st.cache_data(ttl=900, show_spinner=False)
 def get_symbol_catalog():
@@ -141,16 +128,12 @@ def _parse_exchange_candles(provider, raw, resolution):
             rows = raw.get("data", [])
             for row in reversed(rows):
                 candles.append({"open":float(row[1]),"high":float(row[2]),"low":float(row[3]),"close":float(row[4]),"datetime":datetime.fromtimestamp(int(row[0])/1000, tz=timezone.utc).isoformat(),"is_open":str(row[8]) != "1" if len(row)>8 else False})
-        elif provider == "Bybit":
-            rows = raw.get("result", {}).get("list", [])
-            for row in reversed(rows):
-                candles.append({"open":float(row[1]),"high":float(row[2]),"low":float(row[3]),"close":float(row[4]),"datetime":datetime.fromtimestamp(int(row[0])/1000, tz=timezone.utc).isoformat(),"is_open":False})
     except (TypeError, ValueError, IndexError, KeyError):
         return []
     return candles
 
 @st.cache_data(ttl=CANDLE_CACHE_SECONDS, show_spinner=False)
-def get_candles_cached(provider, provider_symbol, resolution):
+def get_candles_cached(provider, provider_symbol, resolution, _fresh_key="cached"):
     interval = "1m" if resolution == "1" else "5m"
     try:
         if provider == "BiQuote":
@@ -172,18 +155,10 @@ def get_candles_cached(provider, provider_symbol, resolution):
             r=requests.get(f"{BITGET_BASE}/api/v3/market/candles",params={"category":"SPOT","symbol":provider_symbol,"interval":interval,"limit":150},timeout=15)
         elif provider == "OKX":
             r=requests.get(f"{OKX_BASE}/api/v5/market/candles",params={"instId":provider_symbol,"bar":interval,"limit":150},timeout=15)
-        elif provider == "Bybit":
-            r=requests.get(f"{BYBIT_BASE}/v5/market/kline",params={"category":"spot","symbol":provider_symbol,"interval":resolution,"limit":150},headers=PUBLIC_API_HEADERS,timeout=15)
         else:
             return [], "UNKNOWN MARKET PROVIDER"
         if r.status_code != 200:
-            detail = ""
-            if provider == "Bybit":
-                try:
-                    detail = f" • {r.json().get('retMsg', '')}"
-                except Exception:
-                    pass
-            return [], f"{provider.upper()} ERROR {r.status_code}{detail}"
+            return [], f"{provider.upper()} ERROR {r.status_code}"
         raw=r.json()
         candles=_parse_exchange_candles(provider,raw,resolution)
         if len(candles)<60: return [], f"NOT ENOUGH {provider.upper()} CANDLES ({len(candles)})"
@@ -196,10 +171,14 @@ def get_candles_cached(provider, provider_symbol, resolution):
         return [], f"{provider.upper()} DATA ERROR: {exc}"
 
 def get_candles(provider, symbol, resolution, fresh=False):
-    return get_candles_cached(provider, symbol, resolution)
+    if fresh:
+        # Cache-bust only at the decision point so the app remains efficient
+        # for multiple simultaneous users.
+        return get_candles_cached(provider, symbol, resolution, _fresh_key=datetime.now(timezone.utc).replace(second=0, microsecond=0).isoformat())
+    return get_candles_cached(provider, symbol, resolution, _fresh_key="cached")
 
 @st.cache_data(ttl=TICK_CACHE_SECONDS, show_spinner=False)
-def get_latest_tick(provider, provider_symbol):
+def get_latest_tick(provider, provider_symbol, fresh=False):
     try:
         if provider == "BiQuote":
             r=requests.get(f"{BIQUOTE_BASE}/{provider_symbol}",timeout=10)
@@ -224,18 +203,6 @@ def get_latest_tick(provider, provider_symbol):
             data=r.json().get("data",[])
             if not data: return None,"OKX NO LIVE PRICE"
             return {"price":float(data[0]["last"])},"OKX LIVE PRICE CONNECTED"
-        if provider == "Bybit":
-            r=requests.get(f"{BYBIT_BASE}/v5/market/tickers",params={"category":"spot","symbol":provider_symbol},headers=PUBLIC_API_HEADERS,timeout=10)
-            if r.status_code!=200:
-                detail = ""
-                try:
-                    detail = f" • {r.json().get("retMsg", "")}"
-                except Exception:
-                    pass
-                return None,f"BYBIT TICK ERROR {r.status_code}{detail}"
-            data=r.json().get("result",{}).get("list",[])
-            if not data: return None,"BYBIT NO LIVE PRICE"
-            return {"price":float(data[0]["lastPrice"])},"BYBIT LIVE PRICE CONNECTED"
         return None,"UNKNOWN MARKET PROVIDER"
     except requests.exceptions.RequestException:
         return None,f"{provider.upper()} TICK NETWORK ERROR"
@@ -411,159 +378,281 @@ def candle_is_completed(candle, interval):
 def completed_candles(candles, interval):
     return [c for c in candles if candle_is_completed(c, interval)]
 
+
+def atr(candles, period=14):
+    if len(candles) < period + 1:
+        return None
+    trs = []
+    for i in range(1, len(candles)):
+        high = float(candles[i]["high"])
+        low = float(candles[i]["low"])
+        prev_close = float(candles[i - 1]["close"])
+        trs.append(max(high - low, abs(high - prev_close), abs(low - prev_close)))
+    if len(trs) < period:
+        return None
+    return sum(trs[-period:]) / period
+
+
+def historical_setup_stats(candles, resolution, lookahead=None, max_samples=90):
+    """
+    Lightweight walk-forward validation on the available candles.
+    This is deliberately not used as a hard trade filter. It calibrates
+    confidence from historical outcomes of the same indicator logic.
+    """
+    if lookahead is None:
+        lookahead = 1 if resolution == "1" else 1
+
+    closed = completed_candles(candles, resolution)
+    if len(closed) < 90:
+        return None
+
+    # Use a compact sample to keep Streamlit responsive for many users.
+    usable = closed[:-lookahead]
+    start_i = max(55, len(usable) - max_samples)
+
+    wins = losses = draws = 0
+    samples = 0
+
+    for i in range(start_i, len(usable)):
+        window = usable[:i + 1]
+        closes = [float(c["close"]) for c in window]
+        if len(closes) < 55:
+            continue
+
+        e9 = ema(closes, 9)
+        e21 = ema(closes, 21)
+        e50 = ema(closes, 50)
+        rv = rsi(closes, 14)
+        mv, _ = macd(closes)
+
+        score = 0
+        if e9 is not None and e21 is not None:
+            score += 1 if e9 > e21 else -1 if e9 < e21 else 0
+        if e21 is not None and e50 is not None:
+            score += 1 if e21 > e50 else -1 if e21 < e50 else 0
+        if e21 is not None:
+            score += 1 if closes[-1] > e21 else -1 if closes[-1] < e21 else 0
+        if rv is not None:
+            score += 1 if rv >= 55 else -1 if rv <= 45 else 0
+        if mv is not None:
+            score += 1 if mv > 0 else -1 if mv < 0 else 0
+        if len(closes) >= 6:
+            score += 1 if closes[-1] > closes[-6] else -1 if closes[-1] < closes[-6] else 0
+
+        if score >= 3:
+            direction = "CALL"
+        elif score <= -3:
+            direction = "PUT"
+        else:
+            continue
+
+        future = float(usable[i + lookahead]["close"])
+        entry = float(window[-1]["close"])
+        samples += 1
+
+        if future > entry and direction == "CALL":
+            wins += 1
+        elif future < entry and direction == "PUT":
+            wins += 1
+        elif future == entry:
+            draws += 1
+        else:
+            losses += 1
+
+    decided = wins + losses
+    if decided < 8:
+        return None
+
+    rate = wins / decided
+    return {
+        "wins": wins,
+        "losses": losses,
+        "draws": draws,
+        "samples": samples,
+        "rate": rate,
+    }
+
+
 def analyze_market(provider, symbol, timeframe):
     resolution = TIMEFRAMES.get(timeframe)
     if resolution is None:
         return {
-            "success": False,
-            "signal": "NO TRADE",
-            "strength": 0,
+            "success": False, "signal": "NO TRADE", "strength": 0,
             "description": "Use 1 MIN or 5 MIN.",
             "status": "TIMEFRAME UNAVAILABLE",
         }
 
-    candles, market_status = get_candles(provider, symbol, resolution)
+    candles, market_status = get_candles(provider, symbol, resolution, fresh=True)
     if len(candles) < 61:
         return {
-            "success": False,
-            "signal": "NO TRADE",
-            "strength": 0,
-            "description": market_status,
-            "status": market_status,
+            "success": False, "signal": "NO TRADE", "strength": 0,
+            "description": market_status, "status": market_status,
         }
 
     closed = completed_candles(candles, resolution)
     if len(closed) < 60:
         return {
-            "success": False,
-            "signal": "NO TRADE",
-            "strength": 0,
+            "success": False, "signal": "NO TRADE", "strength": 0,
             "description": "WAITING FOR ENOUGH COMPLETED CANDLES",
             "status": market_status,
         }
 
-    closes = [c["close"] for c in closed]
+    closes = [float(c["close"]) for c in closed]
     current = closes[-1]
-    ema9 = ema(closes, 9)
-    ema21 = ema(closes, 21)
-    ema50 = ema(closes, 50)
-    rsi_value = rsi(closes, 14)
-    macd_value, previous_macd = macd(closes)
+    e9, e21, e50 = ema(closes, 9), ema(closes, 21), ema(closes, 50)
+    rv = rsi(closes, 14)
+    mv, pmv = macd(closes)
+    atr_value = atr(closed, 14)
 
     score = 0
     reasons = []
+    bullish = bearish = 0
 
-    if ema9 is not None and ema21 is not None:
-        if ema9 > ema21:
-            score += 1
-            reasons.append("EMA 9 is above EMA 21")
-        elif ema9 < ema21:
-            score -= 1
-            reasons.append("EMA 9 is below EMA 21")
+    # Trend: weighted conceptually, but retain the existing -6..+6 style score.
+    if e9 is not None and e21 is not None:
+        if e9 > e21:
+            score += 1; bullish += 1; reasons.append("EMA 9 is above EMA 21")
+        elif e9 < e21:
+            score -= 1; bearish += 1; reasons.append("EMA 9 is below EMA 21")
 
-    if ema21 is not None and ema50 is not None:
-        if ema21 > ema50:
-            score += 1
-            reasons.append("Medium-term trend is bullish")
-        elif ema21 < ema50:
-            score -= 1
-            reasons.append("Medium-term trend is bearish")
+    if e21 is not None and e50 is not None:
+        if e21 > e50:
+            score += 1; bullish += 1; reasons.append("Medium-term trend is bullish")
+        elif e21 < e50:
+            score -= 1; bearish += 1; reasons.append("Medium-term trend is bearish")
 
-    if ema21 is not None:
-        if current > ema21:
-            score += 1
-            reasons.append("Price is above EMA 21")
-        elif current < ema21:
-            score -= 1
-            reasons.append("Price is below EMA 21")
+    if e21 is not None:
+        if current > e21:
+            score += 1; bullish += 1; reasons.append("Price is above EMA 21")
+        elif current < e21:
+            score -= 1; bearish += 1; reasons.append("Price is below EMA 21")
 
-    if rsi_value is not None:
-        if rsi_value >= 55:
-            score += 1
-            reasons.append(f"RSI bullish ({rsi_value:.1f})")
-        elif rsi_value <= 45:
-            score -= 1
-            reasons.append(f"RSI bearish ({rsi_value:.1f})")
+    # Momentum.
+    if rv is not None:
+        if rv >= 55:
+            score += 1; bullish += 1; reasons.append(f"RSI bullish ({rv:.1f})")
+        elif rv <= 45:
+            score -= 1; bearish += 1; reasons.append(f"RSI bearish ({rv:.1f})")
         else:
-            reasons.append(f"RSI neutral ({rsi_value:.1f})")
+            reasons.append(f"RSI neutral ({rv:.1f})")
 
-    if macd_value is not None:
-        if macd_value > 0:
-            score += 1
-            reasons.append("MACD is positive")
-        elif macd_value < 0:
-            score -= 1
-            reasons.append("MACD is negative")
+    if mv is not None:
+        if mv > 0:
+            score += 1; bullish += 1; reasons.append("MACD is positive")
+        elif mv < 0:
+            score -= 1; bearish += 1; reasons.append("MACD is negative")
 
-        if previous_macd is not None:
-            if macd_value > previous_macd:
+        if pmv is not None:
+            if mv > pmv:
                 reasons.append("MACD momentum is rising")
-            elif macd_value < previous_macd:
+            elif mv < pmv:
                 reasons.append("MACD momentum is falling")
 
     if len(closes) >= 6:
         momentum = closes[-1] - closes[-6]
         if momentum > 0:
-            score += 1
-            reasons.append("Recent momentum is bullish")
+            score += 1; bullish += 1; reasons.append("Recent momentum is bullish")
         elif momentum < 0:
-            score -= 1
-            reasons.append("Recent momentum is bearish")
+            score -= 1; bearish += 1; reasons.append("Recent momentum is bearish")
 
-    news = get_market_news(symbol) if provider == "BiQuote" else {"sentiment": 0.0, "articles": 0, "status": "EXCHANGE MARKET DATA • NEWS NOT USED"}
+    # Candle-body / price-action confirmation.
+    last = closed[-1]
+    candle_range = max(float(last["high"]) - float(last["low"]), 1e-12)
+    body = abs(float(last["close"]) - float(last["open"]))
+    body_ratio = body / candle_range
+    if body_ratio >= 0.55:
+        if float(last["close"]) > float(last["open"]):
+            score += 1; bullish += 1; reasons.append("Strong bullish candle body")
+        elif float(last["close"]) < float(last["open"]):
+            score -= 1; bearish += 1; reasons.append("Strong bearish candle body")
+
+    # Volatility guard: avoid extremely flat candles relative to recent ATR.
+    volatility_ok = True
+    if atr_value is not None and current != 0:
+        atr_pct = atr_value / current
+        if atr_pct < 0.00002:
+            volatility_ok = False
+            reasons.append("Very low volatility")
+        elif atr_pct > 0.03:
+            volatility_ok = False
+            reasons.append("Abnormally high volatility")
+
+    news = get_market_news(symbol) if provider == "BiQuote" else {
+        "sentiment": 0.0, "articles": 0,
+        "status": "EXCHANGE MARKET DATA • NEWS NOT USED"
+    }
     sentiment = float(news.get("sentiment", 0.0))
     news_count = int(news.get("articles", 0))
 
+    # News is confirmation only; it cannot create a signal by itself.
     if news_count:
         if sentiment >= 0.15:
-            score += 1
-            reasons.append("Financial news sentiment is bullish")
+            score += 1; bullish += 1; reasons.append("Financial news sentiment is bullish")
         elif sentiment <= -0.15:
-            score -= 1
-            reasons.append("Financial news sentiment is bearish")
+            score -= 1; bearish += 1; reasons.append("Financial news sentiment is bearish")
         else:
             reasons.append("Financial news sentiment is neutral")
 
     if score >= 3:
         signal = "CALL"
-        description = (
-            f"Bullish confirmation. Score {score:+d}. "
-            f"News sentiment {sentiment:+.2f}. Analysis only."
-        )
     elif score <= -3:
         signal = "PUT"
-        description = (
-            f"Bearish confirmation. Score {score:+d}. "
-            f"News sentiment {sentiment:+.2f}. Analysis only."
-        )
     else:
         signal = "NO TRADE"
-        description = (
-            f"Mixed conditions. Score {score:+d}. "
-            f"News sentiment {sentiment:+.2f}. "
-            "Waiting for stronger confirmation."
-        )
 
-    # Current-trade probability estimate. This is a model estimate derived
-    # from the strength and agreement of the indicators above; it is NOT a
-    # guaranteed probability and is never taken from previous trade results.
-    # Map the composite score to a bounded estimate for display.
-    probability = min(95, max(50, int(50 + abs(score) * 6)))
-    if signal == "NO TRADE":
-        probability = max(50, min(60, int(50 + abs(score) * 2)))
+    # Require directional agreement: a large score made from conflicting
+    # components should not be treated like a clean setup.
+    directional_agreement = max(bullish, bearish) / max(1, bullish + bearish)
+    if signal == "CALL" and bearish > bullish:
+        signal = "NO TRADE"
+    elif signal == "PUT" and bullish > bearish:
+        signal = "NO TRADE"
+
+    # Historical walk-forward calibration, not a promise of future results.
+    stats = historical_setup_stats(candles, resolution)
+    if stats:
+        historical_rate = stats["rate"]
+        # Blend the historical rate with current setup quality.
+        current_quality = min(1.0, max(0.0, 0.50 + abs(score) * 0.045 + (directional_agreement - 0.5) * 0.18))
+        raw_probability = 0.70 * historical_rate + 0.30 * current_quality
+        probability = int(round(100 * min(0.90, max(0.50, raw_probability))))
+    else:
+        # Honest fallback while insufficient history exists.
+        probability = int(min(88, max(50, 50 + abs(score) * 5 + round(directional_agreement * 5))))
+
+    # Do not force high confidence when volatility is unsuitable.
+    if not volatility_ok:
+        probability = min(probability, 62)
+        if signal in ("CALL", "PUT"):
+            signal = "NO TRADE"
+
+    strength = min(5, max(1, round(abs(score) / 2))) if signal != "NO TRADE" else min(5, max(0, round(abs(score) / 2)))
+
+    if signal == "CALL":
+        description = f"Bullish setup. Score {score:+d}. Confidence is calibrated from current conditions and recent historical tests."
+    elif signal == "PUT":
+        description = f"Bearish setup. Score {score:+d}. Confidence is calibrated from current conditions and recent historical tests."
+    else:
+        description = f"Conditions are mixed or volatility is unsuitable. Score {score:+d}. Waiting for stronger confirmation."
+
+    if stats:
+        description += f" Similar historical setups: {stats['samples']}."
 
     return {
         "success": True,
         "signal": signal,
-        "strength": min(5, max(1, abs(score))),
+        "strength": strength,
         "probability": probability,
         "score": score,
         "price": current,
         "entry_candle_time": closed[-1]["datetime"],
-        "rsi": rsi_value,
-        "macd": macd_value,
+        "rsi": rv,
+        "macd": mv,
+        "atr": atr_value,
         "news_sentiment": sentiment,
         "news_count": news_count,
+        "historical_samples": stats["samples"] if stats else 0,
+        "historical_rate": stats["rate"] if stats else None,
         "description": description,
         "status": market_status,
         "news_status": news.get("status", "NO NEWS"),
@@ -608,7 +697,9 @@ def seconds_until(iso_value):
 def resolve_trade_if_ready():
     pending = st.session_state.get("trade_pending")
     if not pending or seconds_until(pending.get("complete_at")) > 0: return
-    tick, status = get_latest_tick(pending["provider"], pending["symbol"])
+    # At expiry, bypass the normal short cache so the result uses the latest
+    # available market price/candle rather than an older cached value.
+    tick, status = get_latest_tick(pending["provider"], pending["symbol"], fresh=datetime.now(timezone.utc).replace(microsecond=0).isoformat())
     if tick:
         result_price = float(tick["price"])
     else:
@@ -837,7 +928,7 @@ if selected_page == "Trade":
                 })
             st.rerun()
 
-        st.markdown('<div class="xiga-footer">🔒 SECURE • XIGA AI • V5.4 • MULTI-EXCHANGE ANALYSIS</div>', unsafe_allow_html=True)
+        st.markdown('<div class="xiga-footer">🔒 SECURE • XIGA AI • V5.4 • MULTI-PLATFORM ANALYSIS</div>', unsafe_allow_html=True)
 
     trade_page()
 
