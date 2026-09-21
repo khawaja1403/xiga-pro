@@ -1,4 +1,6 @@
 streamlit
 requests
-extra-streamlit-components==0.1.81
+extra-streamlit-components
 cryptography
+plotly
+pandas
