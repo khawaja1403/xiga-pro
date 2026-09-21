@@ -1030,29 +1030,90 @@ def seconds_until(iso_value):
 
 def resolve_trade_if_ready():
     pending = st.session_state.get("trade_pending")
-    if not pending or seconds_until(pending.get("complete_at")) > 0: return
-    # At expiry, bypass the normal short cache so the result uses the latest
-    # available market price/candle rather than an older cached value.
-    tick, status = get_latest_tick(pending["provider"], pending["symbol"], fresh=datetime.now(timezone.utc).replace(microsecond=0).isoformat())
-    if tick:
-        result_price = float(tick["price"])
-    else:
-        candles, candle_status = get_candles(pending["provider"], pending["symbol"], TIMEFRAMES[pending["timeframe"]])
-        if not candles:
-            pending["state"] = "RESULT ERROR"; pending["error"] = f"{status}; {candle_status}"; return
-        closed = completed_candles(candles, TIMEFRAMES[pending["timeframe"]])
-        if not closed:
-            pending["state"] = "RESULT ERROR"; pending["error"] = f"{status}; NO CLOSED RESULT CANDLE"; return
-        result_price = float(closed[-1]["close"])
-    outcome = calculate_outcome(pending["signal"], pending["entry_price"], result_price)
+    if not pending:
+        return
+
+    # Check the live price during every 1-second fragment refresh.
+    # TAKE PROFIT is the actual success condition. STOP LOSS is display-only.
+    if not pending.get("tp_hit_at"):
+        tick, _status = get_latest_tick(
+            pending["provider"],
+            pending["symbol"],
+            fresh=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        )
+        if tick:
+            live_price = float(tick["price"])
+            target = float(pending["take_profit"])
+            signal = pending["signal"]
+            tp_hit = live_price >= target if signal == "CALL" else live_price <= target
+
+            if tp_hit:
+                started = parse_candle_time(pending.get("started_at"))
+                if started is None:
+                    started = datetime.now(timezone.utc)
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+
+                hit_time = datetime.now(timezone.utc)
+                hit_seconds = max(0, int((hit_time - started).total_seconds()))
+                max_seconds = 60 if pending.get("timeframe") == "1 MIN" else 300
+                hit_seconds = min(hit_seconds, max_seconds)
+
+                pending["tp_hit_at"] = hit_time.isoformat()
+                pending["tp_hit_second"] = hit_seconds
+                pending["tp_hit_price"] = live_price
+                pending["state"] = "TP HIT"
+
+                for item in st.session_state.history:
+                    if item.get("id") == pending.get("id"):
+                        item["tp_hit_second"] = hit_seconds
+                        item["tp_hit_price"] = live_price
+                        break
+
+    # Keep the trade window running until expiry.
+    # At expiry: TP hit at any point = WIN; otherwise = LOSS.
+    if seconds_until(pending.get("complete_at")) > 0:
+        return
+
+    result_price = pending.get("tp_hit_price")
+    if result_price is None:
+        tick, _status = get_latest_tick(
+            pending["provider"],
+            pending["symbol"],
+            fresh=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        )
+        result_price = float(tick["price"]) if tick else float(pending["entry_price"])
+
+    outcome = "WIN" if pending.get("tp_hit_at") else "LOSS"
     checked = datetime.now(ZoneInfo("Asia/Karachi")).strftime("%Y-%m-%d %H:%M:%S PKT")
+
     for item in st.session_state.history:
         if item.get("id") == pending.get("id"):
-            item["status"] = outcome; item["result_price"] = result_price; item["checked_at"] = checked; break
+            item["status"] = outcome
+            item["result_price"] = result_price
+            item["checked_at"] = checked
+            break
+
     st.session_state.result["status"] = outcome
     st.session_state.result["result_price"] = result_price
     st.session_state.result["checked_at"] = checked
-    st.session_state.result["description"] = f"Individual signal result: {outcome}. Entry {pending['entry_price']:.6g} → result {result_price:.6g}."
+
+    if outcome == "WIN":
+        hit_second = int(pending.get("tp_hit_second", 0))
+        st.session_state.result["description"] = (
+            f"TAKE PROFIT HIT at {hit_second}s. "
+            f"TP {pending['take_profit']:.8g} reached at {pending.get('tp_hit_price', result_price):.8g}."
+        )
+        st.session_state.result["tp_hit_second"] = hit_second
+        st.session_state.result["tp_hit_price"] = pending.get("tp_hit_price", result_price)
+    else:
+        st.session_state.result["description"] = (
+            f"TAKE PROFIT was not reached during the "
+            f"{1 if pending.get('timeframe') == '1 MIN' else 5}-minute trade window."
+        )
+        st.session_state.result["tp_hit_second"] = None
+        st.session_state.result["tp_hit_price"] = None
+
     st.session_state.trade_pending = None
     update_win_loss_totals()
 
@@ -1061,36 +1122,9 @@ ASSETS, catalog_status = get_symbol_catalog()
 st.markdown("""
 <style>
 html,body,[data-testid="stAppViewContainer"]{background:radial-gradient(circle at 50% -10%,#173957 0%,#0a1c30 25%,#030914 62%,#020711 100%) !important}
-[data-testid="stHeader"],
-header[data-testid="stHeader"]{
-    display:none !important;
-    height:0 !important;
-    min-height:0 !important;
-    padding:0 !important;
-    margin:0 !important;
-}
-
-[data-testid="stAppViewContainer"],
-[data-testid="stAppViewContainer"] > .main,
-[data-testid="stMain"],
-[data-testid="stAppViewBlockContainer"],
-[data-testid="stMainBlockContainer"]{
-    padding-top:0 !important;
-    margin-top:0 !important;
-}
-
-[data-testid="stMainBlockContainer"]{
-    max-width:500px !important;
-    padding-left:12px !important;
-    padding-right:12px !important;
-}
-
-.block-container,
-[data-testid="stAppViewContainer"] .main .block-container{
-    padding-top:0 !important;
-    margin-top:0 !important;
-    padding-bottom:25px !important;
-}
+[data-testid="stHeader"]{background:transparent !important}
+[data-testid="stMainBlockContainer"]{max-width:500px !important;padding-top:0 !important;padding-left:12px !important;padding-right:12px !important}
+.block-container{padding-top:0 !important;padding-bottom:25px !important}
 .xiga-topbar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;width:100%;margin:0 0 12px;padding:0}.xiga-brand{text-align:center}.xiga-title{color:#fff;font-size:25px;font-weight:900;letter-spacing:1px}.xiga-title span{color:#28f3a5}.xiga-subtitle{margin-top:4px;color:#71859d;font-size:8px;letter-spacing:2px}.xiga-pro-wrap{display:flex;justify-content:flex-end}.xiga-pro{min-width:66px;padding:9px 8px;text-align:center;border-radius:12px;background:linear-gradient(135deg,#3d2d0d,#1f1809);border:1px solid #9b741d;color:#ffd76a;font-size:10px;font-weight:800}
 .xiga-card{background:linear-gradient(145deg,rgba(13,34,57,.96),rgba(5,16,29,.97));border:1px solid rgba(32,91,132,.72);border-radius:20px;box-shadow:0 18px 45px rgba(0,0,0,.32),inset 0 1px rgba(255,255,255,.035);padding:12px;margin-bottom:12px}
 div[data-testid="stSelectbox"] label{color:#7d93aa !important;font-size:8px !important;letter-spacing:1.4px !important;text-transform:uppercase !important}div[data-baseweb="select"]>div{background:linear-gradient(145deg,rgba(9,39,64,.98),rgba(7,25,43,.98)) !important;border:1px solid #185276 !important;color:white !important;border-radius:12px !important}div[data-baseweb="select"] span{color:white !important}.xiga-market-status{color:#29f4a5;font-size:7px;margin-top:3px}
@@ -1195,9 +1229,13 @@ if selected_page == "Trade":
             win_display = f'{int(result.get("probability", 50))}%'
             win_status = f'● TRADE TIME {format_countdown(remaining)}'
             ai_title = "SIGNAL READY • TRADE WINDOW"
-        elif result.get("status") in ("WIN", "LOSS", "DRAW"):
+        elif result.get("status") in ("WIN", "LOSS"):
             win_display = result.get("status")
-            win_status = "● INDIVIDUAL SIGNAL RESULT"
+            hit_second = result.get("tp_hit_second")
+            if result.get("status") == "WIN" and hit_second is not None:
+                win_status = f"● TAKE PROFIT HIT AT {int(hit_second)}s"
+            else:
+                win_status = "● TAKE PROFIT NOT REACHED"
             ai_title = "TRADE WINDOW COMPLETE"
         elif result.get("success") and result.get("signal") in ("CALL", "PUT"):
             win_display = f'{int(result.get("probability", 50))}%'
@@ -1299,7 +1337,7 @@ if selected_page == "Trade":
                     "probability": analysis.get("probability", 50), "price": entry_price,
                     "take_profit": take_profit, "stop_loss": stop_loss,
                     "timeframe": tf, "time": start.strftime("%Y-%m-%d %H:%M:%S PKT"), "provider": selected_provider,
-                    "status": "PENDING", "result_price": "—",
+                    "status": "PENDING", "result_price": "—", "tp_hit_second": None, "tp_hit_price": None,
                     "analysis_description": analysis.get("description", ""), "entry_status": entry_status,
                 })
             st.rerun()
