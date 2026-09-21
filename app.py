@@ -24,11 +24,7 @@ if not COOKIE_PASSWORD:
 
 _COOKIE_FERNET_KEY = base64.urlsafe_b64encode(hashlib.sha256(COOKIE_PASSWORD.encode()).digest())
 COOKIE_FERNET = Fernet(_COOKIE_FERNET_KEY)
-@st.cache_resource
-def get_cookie_manager():
-    return stx.CookieManager(key="xiga-pro-auth")
-
-COOKIE_MANAGER = get_cookie_manager()
+COOKIE_MANAGER = stx.CookieManager(key="xiga-pro-auth")
 COOKIE_NAME = "xiga_refresh"
 COOKIE_DAYS = 365
 
