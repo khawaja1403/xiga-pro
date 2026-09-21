@@ -8,6 +8,11 @@ from cryptography.fernet import Fernet, InvalidToken
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+try:
+    import plotly.graph_objects as go
+except Exception:
+    go = None
+
 st.set_page_config(
     page_title="XIGA Trading",
     page_icon="📈",
@@ -406,15 +411,15 @@ def _parse_exchange_candles(provider, raw, resolution):
         if provider == "Binance":
             rows = raw
             for row in reversed(rows):
-                candles.append({"open":float(row[1]),"high":float(row[2]),"low":float(row[3]),"close":float(row[4]),"datetime":datetime.fromtimestamp(row[0]/1000, tz=timezone.utc).isoformat(),"is_open":datetime.now(timezone.utc).timestamp()*1000 < row[6]})
+                candles.append({"open":float(row[1]),"high":float(row[2]),"low":float(row[3]),"close":float(row[4]),"volume":float(row[5]),"datetime":datetime.fromtimestamp(row[0]/1000, tz=timezone.utc).isoformat(),"is_open":datetime.now(timezone.utc).timestamp()*1000 < row[6]})
         elif provider == "Bitget":
             rows = raw.get("data", [])
             for row in reversed(rows):
-                candles.append({"open":float(row[1]),"high":float(row[2]),"low":float(row[3]),"close":float(row[4]),"datetime":datetime.fromtimestamp(int(row[0])/1000, tz=timezone.utc).isoformat(),"is_open":False})
+                candles.append({"open":float(row[1]),"high":float(row[2]),"low":float(row[3]),"close":float(row[4]),"volume":float(row[5]) if len(row)>5 else 0.0,"datetime":datetime.fromtimestamp(int(row[0])/1000, tz=timezone.utc).isoformat(),"is_open":False})
         elif provider == "OKX":
             rows = raw.get("data", [])
             for row in reversed(rows):
-                candles.append({"open":float(row[1]),"high":float(row[2]),"low":float(row[3]),"close":float(row[4]),"datetime":datetime.fromtimestamp(int(row[0])/1000, tz=timezone.utc).isoformat(),"is_open":str(row[8]) != "1" if len(row)>8 else False})
+                candles.append({"open":float(row[1]),"high":float(row[2]),"low":float(row[3]),"close":float(row[4]),"volume":float(row[5]) if len(row)>5 else 0.0,"datetime":datetime.fromtimestamp(int(row[0])/1000, tz=timezone.utc).isoformat(),"is_open":str(row[8]) != "1" if len(row)>8 else False})
     except (TypeError, ValueError, IndexError, KeyError):
         return []
     return candles
@@ -431,7 +436,7 @@ def get_candles_cached(provider, provider_symbol, resolution, _fresh_key="cached
             candles=[]
             for bar in reversed(bars):
                 try:
-                    candles.append({"open":float(bar["open"]),"high":float(bar["high"]),"low":float(bar["low"]),"close":float(bar["close"]),"datetime":str(bar["openTime"]),"is_open":bool(bar.get("isOpen",False))})
+                    candles.append({"open":float(bar["open"]),"high":float(bar["high"]),"low":float(bar["low"]),"close":float(bar["close"]),"volume":float(bar.get("volume",0) or 0),"datetime":str(bar["openTime"]),"is_open":bool(bar.get("isOpen",False))})
                 except (KeyError,TypeError,ValueError): pass
             if len(candles)<60: return [], f"NOT ENOUGH DATA ({len(candles)} CANDLES)"
             return candles, "BIQUOTE MARKET DATA CONNECTED"
@@ -1543,386 +1548,293 @@ def resolve_trade_if_ready():
 ASSETS, catalog_status = get_symbol_catalog()
 
 # ==============================
-# XIGA PRO MOBILE UI
+# XIGA PRO MOBILE UI — FINAL
 # ==============================
-st.markdown("""
-<style>
-html,body,[data-testid="stAppViewContainer"]{background:radial-gradient(circle at 50% -10%,#173957 0%,#0a1c30 25%,#030914 62%,#020711 100%) !important}
-[data-testid="stHeader"]{display:none !important;background:transparent !important}
-[data-testid="stMainBlockContainer"]{max-width:520px !important;padding-top:0 !important;padding-left:12px !important;padding-right:12px !important}
-.block-container{padding-top:0 !important;padding-bottom:25px !important}
-footer,#MainMenu{display:none !important}
-.xiga-topbar{display:grid;grid-template-columns:44px 1fr 76px;align-items:center;gap:8px;margin:0 0 12px;padding:4px 0}
-.xiga-menu{font-size:28px;color:#e7f5ff;line-height:1;text-align:left}
-.xiga-brand{text-align:center}.xiga-title{color:#fff;font-size:25px;font-weight:950;letter-spacing:1px}.xiga-title span{color:#2d8dff}.xiga-subtitle{margin-top:2px;color:#71859d;font-size:8px;letter-spacing:2px}.xiga-live{text-align:right;color:#28f3a5;font-size:9px;font-weight:800;line-height:1.4}.xiga-live small{display:block;color:#8aa0b5;font-weight:500}
-.xiga-nav{margin:0 0 12px;background:rgba(4,18,31,.78);border:1px solid #143b5b;border-radius:16px;padding:4px}
-div[role="radiogroup"]{display:flex !important;justify-content:space-between !important;gap:2px !important;flex-wrap:nowrap !important;margin:0 !important}div[role="radiogroup"] label{color:#7f95aa !important;font-size:9px !important;padding:8px 4px !important;white-space:nowrap !important;flex:1 !important;justify-content:center !important;text-align:center !important}div[role="radiogroup"] label:has(input:checked){color:#29f5a6 !important;background:rgba(19,91,130,.28);border-radius:11px}
-.xiga-card{background:linear-gradient(145deg,rgba(13,34,57,.96),rgba(5,16,29,.97));border:1px solid rgba(32,91,132,.72);border-radius:20px;box-shadow:0 18px 45px rgba(0,0,0,.28),inset 0 1px rgba(255,255,255,.035);padding:13px;margin-bottom:12px}
-.xiga-section-title{color:#fff;font-size:17px;font-weight:900;margin-bottom:8px}.xiga-muted{color:#8296ad;font-size:10px;line-height:1.5}
-div[data-testid="stSelectbox"] label{color:#7d93aa !important;font-size:8px !important;letter-spacing:1.2px !important;text-transform:uppercase !important}div[data-baseweb="select"]>div{background:linear-gradient(145deg,rgba(9,39,64,.98),rgba(7,25,43,.98)) !important;border:1px solid #185276 !important;color:white !important;border-radius:12px !important}div[data-baseweb="select"] span{color:white !important}
-.xiga-market-status{color:#29f4a5;font-size:8px;margin-top:2px}
-.stButton>button{width:100%;height:54px;border-radius:15px;border:1px solid #5aaeff;background:linear-gradient(100deg,#087cff,#24b5ff);color:#fff;font-size:14px;font-weight:950;box-shadow:0 8px 28px rgba(0,126,255,.20)}.stButton>button:hover{border-color:#7cc7ff;color:#fff}
-.xiga-analyze-note{text-align:center;color:#71879d;font-size:8px;margin:6px 0 10px}
-.xiga-signal-card{border-radius:20px;padding:16px;background:linear-gradient(145deg,rgba(6,25,43,.98),rgba(3,13,24,.99));border:1px solid #17557d;box-shadow:0 15px 40px rgba(0,0,0,.28);margin-bottom:12px}
-.xiga-signal-card.buy{border-color:rgba(41,245,166,.72);box-shadow:0 0 22px rgba(41,245,166,.10)}.xiga-signal-card.sell{border-color:rgba(255,61,112,.72);box-shadow:0 0 22px rgba(255,61,112,.10)}.xiga-signal-card.result-win{border-color:#29f5a6;box-shadow:0 0 28px rgba(41,245,166,.14)}.xiga-signal-card.result-loss{border-color:#ff416f;box-shadow:0 0 28px rgba(255,65,111,.12)}
-.xiga-signal-head{display:flex;justify-content:space-between;align-items:center;color:#8ca1b7;font-size:9px;letter-spacing:1px;text-transform:uppercase}.xiga-badge{padding:5px 8px;border-radius:9px;color:#fff;background:#123d61;border:1px solid #216b9e;font-size:8px}.xiga-badge.live{color:#07160f;background:#2af5a5;border-color:#2af5a5}.xiga-badge.win{color:#03140d;background:#29f5a6;border-color:#29f5a6}.xiga-badge.loss{color:#fff;background:#ff416f;border-color:#ff416f}.xiga-badge.expired{color:#fff;background:#66788a;border-color:#66788a}
-.xiga-signal-main{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:15px 0 13px}.xiga-direction-word{font-size:44px;font-weight:950;letter-spacing:-1px}.buy-text{color:#29f5a6;text-shadow:0 0 22px rgba(41,245,166,.25)}.sell-text{color:#ff416f;text-shadow:0 0 22px rgba(255,65,111,.25)}.neutral-text{color:#91a9bd}.xiga-confidence{text-align:right}.xiga-confidence-label{color:#8195aa;font-size:9px}.xiga-confidence-value{color:#fff;font-size:30px;font-weight:950}.xiga-bar{height:7px;width:105px;background:#102d46;border-radius:10px;overflow:hidden;margin-top:5px}.xiga-bar span{display:block;height:100%;border-radius:10px;background:linear-gradient(90deg,#1d9cff,#29f5a6)}
-.xiga-levels{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.xiga-level{background:rgba(5,23,39,.96);border:1px solid #17557d;border-radius:13px;padding:10px 5px;text-align:center}.xiga-level-label{color:#8296ad;font-size:8px;text-transform:uppercase}.xiga-level-value{color:#fff;font-size:12px;font-weight:900;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.xiga-level-value.entry{color:#fff}.xiga-level-value.tp{color:#29f5a6}.xiga-level-value.sl{color:#ff718e}
-.xiga-trade-status{text-align:center;padding:13px 8px;margin-top:9px;border-radius:15px;background:linear-gradient(145deg,rgba(7,29,49,.98),rgba(5,17,30,.98));border:1px solid #17557d}.xiga-timer{font-size:31px;font-weight:950;color:#fff}.xiga-timer.active{color:#29f5a6}.xiga-timer.loss{color:#ff416f}.xiga-timer.expired{color:#9eb0bf}.xiga-status-text{color:#8296ad;font-size:9px;margin-top:3px}.xiga-result-time{color:#29f5a6;font-size:10px;font-weight:900;margin-top:4px}
-.xiga-why{display:flex;gap:10px;align-items:center;padding:13px;border-radius:16px;background:linear-gradient(145deg,rgba(7,37,47,.97),rgba(5,19,31,.97));border:1px solid rgba(31,181,150,.55);margin-bottom:12px}.xiga-why-icon{font-size:25px}.xiga-why-title{color:#fff;font-size:11px;font-weight:900}.xiga-why-text{color:#8396aa;font-size:9px;line-height:1.5;margin-top:3px}
-.xiga-status-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.xiga-status-item{background:rgba(5,23,39,.96);border:1px solid #17557d;border-radius:13px;padding:10px 5px;text-align:center}.xiga-status-label{color:#8296ad;font-size:8px}.xiga-status-value{color:#fff;font-size:10px;font-weight:900;margin-top:5px}.xiga-status-value.green{color:#29f5a6}.xiga-status-value.red{color:#ff416f}
-.xiga-footer{text-align:center;margin-top:9px;color:#4f647a;font-size:7px;letter-spacing:.5px}
-.xiga-account-card{background:linear-gradient(145deg,rgba(13,34,57,.98),rgba(5,16,29,.99));border:1px solid rgba(32,91,132,.72);border-radius:18px;padding:14px;margin-bottom:12px}.xiga-account-label{color:#7d93aa;font-size:8px;letter-spacing:1.2px;text-transform:uppercase}.xiga-account-value{color:#fff;font-size:12px;font-weight:800;margin-top:5px;word-break:break-word}.xiga-profile-levels{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:12px}.xiga-profile-level{background:rgba(5,23,39,.96);border:1px solid #17557d;border-radius:12px;padding:9px 4px;text-align:center}.xiga-profile-level b{display:block;color:#8296ad;font-size:7px;text-transform:uppercase}.xiga-profile-level span{display:block;color:#29f5a6;font-size:11px;font-weight:900;margin-top:4px}
-.xiga-stat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:7px}.xiga-stat-box{background:rgba(5,23,39,.96);border:1px solid #17557d;border-radius:13px;padding:11px;text-align:center}.xiga-stat-box b{display:block;color:#8296ad;font-size:8px}.xiga-stat-box span{display:block;color:#fff;font-size:19px;font-weight:950;margin-top:5px}.xiga-stat-box span.green{color:#29f5a6}.xiga-stat-box span.red{color:#ff416f}
-.xiga-history-item{padding:12px;border:1px solid #17557d;border-radius:15px;background:rgba(5,23,39,.96);margin-bottom:8px}.xiga-history-top{display:flex;justify-content:space-between;color:#fff;font-size:11px;font-weight:900}.xiga-history-sub{color:#7f94a8;font-size:8px;margin-top:4px;line-height:1.5}.xiga-history-result{font-size:10px;font-weight:900;margin-top:7px}.win{color:#29f5a6}.loss{color:#ff416f}.expired{color:#a6b6c4}
-.xiga-analysis-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:7px}.xiga-analysis-item{background:rgba(5,23,39,.96);border:1px solid #17557d;border-radius:13px;padding:11px}.xiga-analysis-item b{display:block;color:#8296ad;font-size:8px}.xiga-analysis-item span{display:block;color:#fff;font-size:13px;font-weight:900;margin-top:5px}.xiga-reason{padding:8px 0;color:#b6c8d8;font-size:10px;border-bottom:1px solid rgba(23,85,125,.45)}
-@media(max-width:390px){.xiga-title{font-size:22px}.xiga-direction-word{font-size:38px}.xiga-confidence-value{font-size:26px}.xiga-status-grid{grid-template-columns:1fr}.xiga-levels{gap:4px}}
-</style>
-""", unsafe_allow_html=True)
 
-nav_options = ["Dashboard", "Analysis", "Backtest", "History", "Profile"]
-legacy_page = {"Trade": "Dashboard", "Learn": "Backtest"}
-current_page = legacy_page.get(st.session_state.get("page", "Dashboard"), st.session_state.get("page", "Dashboard"))
-if current_page not in nav_options:
-    current_page = "Dashboard"
-st.session_state.page = current_page
-
-# Mobile-first navigation: the hamburger opens the five-page menu.
-# A compact tab row remains below the header for one-tap navigation.
-top_menu, top_brand, top_live = st.columns([0.65, 2.2, 1.0])
-with top_menu:
-    with st.popover("☰", use_container_width=True):
-        st.markdown("**XIGA PRO**")
-        for page_name in nav_options:
-            if st.button(page_name, key=f"menu_{page_name}", use_container_width=True):
-                st.session_state.page = page_name
-                st.rerun()
-with top_brand:
-    st.markdown('<div class="xiga-brand"><div class="xiga-title"><span>▰</span> XIGA PRO</div><div class="xiga-subtitle">TRADE SMARTER</div></div>', unsafe_allow_html=True)
-with top_live:
-    st.markdown('<div class="xiga-live">● LIVE DATA<small>Market Connected</small></div>', unsafe_allow_html=True)
-
-st.markdown('<div class="xiga-nav">', unsafe_allow_html=True)
-selected_page = st.radio("Navigation", nav_options, index=nav_options.index(st.session_state.page), horizontal=True, label_visibility="collapsed", key="navigation")
-st.session_state.page = selected_page
-st.markdown('</div>', unsafe_allow_html=True)
+ANALYSIS_SECONDS = 4
 
 
-def signal_label(signal):
-    return {"CALL": "BUY", "PUT": "SELL"}.get(signal, signal)
+def perform_pending_analysis():
+    # Complete the short analysis countdown and immediately create the live trade.
+    pending = st.session_state.get("analysis_pending")
+    if not pending or seconds_until(pending.get("complete_at")) > 0:
+        return
+    provider = pending["provider"]
+    symbol = pending["symbol"]
+    timeframe = pending["timeframe"]
+    try:
+        analysis = analyze_market(provider, symbol, timeframe)
+    except Exception as exc:
+        analysis = {"success": False, "signal": "NO TRADE", "strength": 0, "probability": None, "status": "ANALYSIS ERROR", "description": "XIGA could not complete this analysis. Please try again.", "error": str(exc)}
+    st.session_state.analysis_pending = None
+    st.session_state.result = analysis
+    if not analysis.get("success"):
+        return
+    signal = analysis.get("signal")
+    if signal not in ("CALL", "PUT"):
+        return
+    tick, tick_status = get_latest_tick(provider, symbol, fresh=True)
+    entry_price = float(tick["price"]) if tick else float(analysis.get("price") or 0)
+    entry, take_profit, stop_loss = calculate_trade_levels(signal, entry_price, analysis.get("atr"), analysis.get("support"), analysis.get("resistance"), timeframe, analysis.get("tp_profile"))
+    if not entry or take_profit is None or stop_loss is None:
+        st.session_state.result.update({"success": False, "signal": "NO TRADE", "status": "NO TRADE", "description": "XIGA could not calculate safe trade levels from the current market data."})
+        return
+    duration_seconds = 60 if timeframe == "1 MIN" else 300
+    now = datetime.now(timezone.utc)
+    trade_id = pending["id"]
+    st.session_state.result.update({"entry_price": entry, "take_profit": take_profit, "stop_loss": stop_loss, "status": "TRADE ACTIVE", "entry_status": tick_status, "description": analysis.get("description", "Signal generated from the current market conditions.")})
+    st.session_state.trade_pending = {"id": trade_id, "asset": pending["asset"], "symbol": symbol, "provider": provider, "timeframe": timeframe, "signal": signal, "probability": int(analysis.get("probability") or 50), "entry_price": entry, "take_profit": take_profit, "stop_loss": stop_loss, "started_at": now.isoformat(), "complete_at": (now + timedelta(seconds=duration_seconds)).isoformat(), "state": "TRADE ACTIVE", "live_price": entry}
+    st.session_state.history.insert(0, {"id": trade_id, "asset": pending["asset"], "symbol": symbol, "provider": provider, "signal": signal, "strength": analysis.get("strength", 0), "probability": analysis.get("probability", 50), "price": entry, "take_profit": take_profit, "stop_loss": stop_loss, "timeframe": timeframe, "time": now.astimezone(ZoneInfo("Asia/Karachi")).strftime("%Y-%m-%d %H:%M:%S PKT"), "status": "PENDING", "result_price": "—", "analysis_description": analysis.get("description", ""), "entry_status": tick_status})
+    st.session_state.signals = len(st.session_state.history)
 
 
-def signal_class(signal):
+def render_candlestick_chart(provider, symbol, resolution, timeframe, active_trade=None):
+    candles, status = get_candles(provider, symbol, resolution, fresh=False)
+    if not candles:
+        st.markdown(f'<div class="xiga-chart-empty">LIVE CANDLES UNAVAILABLE<br><span>{status}</span></div>', unsafe_allow_html=True)
+        return
+    rows = candles[-45:]
+    if go is None:
+        st.markdown('<div class="xiga-chart-empty">Candlestick chart requires Plotly.</div>', unsafe_allow_html=True)
+        return
+    times = [parse_candle_time(c.get("datetime")) for c in rows]
+    opens = [float(c["open"]) for c in rows]
+    highs = [float(c["high"]) for c in rows]
+    lows = [float(c["low"]) for c in rows]
+    closes = [float(c["close"]) for c in rows]
+    volumes = [float(c.get("volume", 0) or 0) for c in rows]
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(x=times, open=opens, high=highs, low=lows, close=closes, increasing_line_color="#20e7a0", increasing_fillcolor="#20e7a0", decreasing_line_color="#ff4d5d", decreasing_fillcolor="#ff4d5d", name="Price"))
+    if any(volumes):
+        fig.add_trace(go.Bar(x=times, y=volumes, name="Volume", marker_color=["#20e7a0" if c >= o else "#ff4d5d" for c, o in zip(closes, opens)], opacity=0.25, yaxis="y2"))
+    latest_price = closes[-1]
+    if active_trade:
+        for value, color, label in ((active_trade.get("entry_price"), "#8ca6bd", "ENTRY"), (active_trade.get("take_profit"), "#20e7a0", "TP"), (active_trade.get("stop_loss"), "#ff4d5d", "SL")):
+            if value is not None:
+                fig.add_hline(y=float(value), line_dash="dot", line_color=color, annotation_text=label, annotation_position="top left")
+    fig.add_hline(y=latest_price, line_dash="dot", line_color="#2da8ff", opacity=0.75)
+    fig.update_layout(height=300, margin=dict(l=8, r=8, t=32, b=8), paper_bgcolor="#041322", plot_bgcolor="#041322", font=dict(color="#a9bdd0", size=10), showlegend=False, xaxis=dict(showgrid=True, gridcolor="rgba(40,93,128,.20)", rangeslider_visible=False), yaxis=dict(showgrid=True, gridcolor="rgba(40,93,128,.20)", side="right", fixedrange=True), yaxis2=dict(overlaying="y", side="left", showgrid=False, showticklabels=False), hovermode="x unified")
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+    st.markdown(f'<div class="xiga-chart-meta">{symbol} • {timeframe} • {provider} • {status} • LIVE CANDLES</div>', unsafe_allow_html=True)
+
+
+def signal_display(signal):
+    return "BUY" if signal == "CALL" else "SELL" if signal == "PUT" else "NO TRADE"
+
+
+def signal_color_class(signal):
     return "buy" if signal == "CALL" else "sell" if signal == "PUT" else "neutral"
 
 
-def render_result_card(result, timeframe):
-    signal = result.get("signal", "READY")
-    display_signal = signal_label(signal)
-    status = result.get("status", "READY")
-    is_result = status in ("WIN", "LOSS", "EXPIRED")
-    card_class = signal_class(signal)
-    if status == "WIN": card_class += " result-win"
-    if status == "LOSS": card_class += " result-loss"
-    badge = "LIVE" if not is_result else status
-    badge_class = "live" if not is_result else ("win" if status == "WIN" else "loss" if status == "LOSS" else "expired")
-    probability = result.get("probability")
-    probability_text = f"{int(probability)}%" if probability is not None else "—"
-    entry = result.get("entry_price")
-    tp = result.get("take_profit")
-    sl = result.get("stop_loss")
-    if entry is None: entry = result.get("price")
-    levels = ""
-    if signal in ("CALL", "PUT") and entry is not None and tp is not None and sl is not None:
-        entry_label = "BUY AT" if signal == "CALL" else "SELL AT"
-        levels = f"""<div class="xiga-levels"><div class="xiga-level"><div class="xiga-level-label">{entry_label}</div><div class="xiga-level-value entry">{float(entry):.8g}</div></div><div class="xiga-level"><div class="xiga-level-label">TAKE PROFIT</div><div class="xiga-level-value tp">{float(tp):.8g}</div></div><div class="xiga-level"><div class="xiga-level-label">STOP LOSS</div><div class="xiga-level-value sl">{float(sl):.8g}</div></div></div>"""
-
-    if status == "WIN":
-        timer = result.get("result_time", result.get("tp_hit_elapsed", "—"))
-        timer_class = "active"
-        timer_text = timer
-        status_text = "TAKE PROFIT HIT"
-    elif status == "LOSS":
-        timer = result.get("result_time", "—")
-        timer_class = "loss"
-        timer_text = timer
-        status_text = "STOP LOSS / LOSS"
-    elif status == "EXPIRED":
-        timer = result.get("result_time", "—")
-        timer_class = "expired"
-        timer_text = timer
-        status_text = "TRADE WINDOW EXPIRED"
-    elif st.session_state.get("trade_pending"):
-        timer = format_countdown(seconds_until(st.session_state.trade_pending.get("complete_at")))
-        timer_class = "active"
-        timer_text = timer
-        status_text = "TRADE ACTIVE • MONITORING LIVE PRICE"
-    else:
-        timer_text = "READY"
-        timer_class = "expired"
-        status_text = "READY FOR ANALYSIS"
-
-    if status == "WIN":
-        reason = result.get("result_reason", "Take profit target reached.")
-    elif status == "LOSS":
-        reason = result.get("result_reason", "Trade moved against the signal.")
-    elif status == "EXPIRED":
-        reason = result.get("result_reason", "Trade window ended without TP or SL.")
-    else:
-        reason = result.get("description", "Select your market and tap Analyze Market.")
-
-    return f"""
-<div class="xiga-signal-card {card_class}">
-  <div class="xiga-signal-head"><span>XIGA SIGNAL • {result.get("entry_candle_time", "LIVE")}</span><span class="xiga-badge {badge_class}">{badge}</span></div>
-  <div class="xiga-signal-main">
-    <div class="xiga-direction-word {"buy-text" if signal == "CALL" else "sell-text" if signal == "PUT" else "neutral-text"}">{"↑" if signal == "CALL" else "↓" if signal == "PUT" else "—"} {display_signal}</div>
-    <div class="xiga-confidence"><div class="xiga-confidence-label">CONFIDENCE</div><div class="xiga-confidence-value">{probability_text}</div><div class="xiga-bar"><span style="width:{int(probability or 0)}%"></span></div></div>
-  </div>
-  {levels}
-  <div class="xiga-trade-status"><div class="xiga-timer {timer_class}">{timer_text}</div><div class="xiga-status-text">{status_text} • {timeframe}</div>{f'<div class="xiga-result-time">Result recorded at {result.get("result_time", "—")}</div>' if is_result else ''}</div>
-  <div class="xiga-why"><div class="xiga-why-icon">💡</div><div><div class="xiga-why-title">{("Why this signal?" if not is_result else "Trade result")}</div><div class="xiga-why-text">{reason}</div></div></div>
-</div>
-"""
+st.markdown('''
+<style>
+html,body,[data-testid="stAppViewContainer"]{background:#020a12 !important;color:#eaf6ff !important}
+[data-testid="stHeader"]{display:none !important;height:0 !important}[data-testid="stToolbar"]{display:none !important}
+[data-testid="stMainBlockContainer"]{max-width:920px !important;padding-top:0 !important;padding-left:8px !important;padding-right:8px !important}.block-container{padding-top:0 !important;padding-bottom:86px !important}
+footer,#MainMenu{display:none !important}section[data-testid="stSidebar"]{display:none !important}.xiga-app{max-width:900px;margin:0 auto}
+.xiga-header{display:flex;align-items:center;justify-content:space-between;padding:2px 2px 8px;border-bottom:1px solid rgba(33,102,143,.25)}.xiga-logo{font-size:24px;font-weight:950;letter-spacing:1px;color:#fff;line-height:1}.xiga-logo b{color:#1d9dff}.xiga-tag{font-size:7px;letter-spacing:2px;color:#71899e;margin-top:3px}.xiga-live-box{text-align:right}.xiga-live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#20e7a0;box-shadow:0 0 12px #20e7a0;margin-right:5px}.xiga-live-text{color:#20e7a0;font-weight:900;font-size:11px}.xiga-live-sub{display:block;color:#91a6b9;font-size:8px;margin-top:2px}.xiga-pro{display:inline-block;margin-left:7px;padding:6px 8px;border:1px solid #a98026;border-radius:9px;color:#ffd66d;background:#171207;font-size:8px;font-weight:900}
+.xiga-selector-card{margin-top:8px;background:linear-gradient(145deg,#061a2b,#04111d);border:1px solid #075d8e;border-radius:15px;padding:9px;box-shadow:0 10px 25px rgba(0,0,0,.22)}.xiga-selector-card [data-testid="stSelectbox"] label{color:#89a0b5 !important;font-size:8px !important;letter-spacing:1.2px !important;text-transform:uppercase !important}.xiga-selector-card [data-baseweb="select"]>div{background:#071827 !important;border:1px solid #125b86 !important;border-radius:11px !important;min-height:43px !important;color:#edf7ff !important}.xiga-selector-card [data-baseweb="select"] *{color:#edf7ff !important}.xiga-market-ready{font-size:8px;color:#20e7a0;margin-top:7px;letter-spacing:.4px}
+.xiga-card,.xiga-page-card{background:linear-gradient(145deg,#061b2d,#03101b);border:1px solid #075887;border-radius:18px;padding:12px;margin-top:10px;box-shadow:0 14px 34px rgba(0,0,0,.25),inset 0 1px rgba(255,255,255,.025)}.xiga-page-title{font-size:19px;font-weight:950;color:#fff}.xiga-page-sub{font-size:9px;color:#8399ad;line-height:1.5;margin-top:4px}
+.xiga-signal-card{padding:13px;border-radius:18px;border:1px solid #0871a7;background:radial-gradient(circle at 50% 0%,#073148 0%,#03131f 55%,#020d16 100%);margin-top:10px}.xiga-signal-card.buy{border-color:#0bd99a;box-shadow:0 0 22px rgba(20,231,160,.10)}.xiga-signal-card.sell{border-color:#ff4052;box-shadow:0 0 22px rgba(255,64,82,.08)}
+.xiga-signal-head{display:flex;justify-content:space-between;align-items:center;color:#8ba3b7;font-size:8px;letter-spacing:1.3px}.xiga-badge{padding:6px 9px;border-radius:9px;font-size:8px;font-weight:900}.xiga-badge.live,.xiga-badge.win{color:#03140d;background:#20e7a0}.xiga-badge.loss{color:#fff;background:#ff4052}.xiga-badge.expired{color:#09131b;background:#a8b7c5}
+.xiga-signal-main{display:grid;grid-template-columns:1.25fr .75fr;gap:10px;align-items:center;margin:9px 0}.xiga-direction{font-size:50px;font-weight:1000;line-height:.95;letter-spacing:-2px}.buy-text{color:#20e7a0;text-shadow:0 0 18px rgba(32,231,160,.25)}.sell-text{color:#ff4052;text-shadow:0 0 18px rgba(255,64,82,.20)}.neutral-text{color:#9bb0c1}.xiga-confidence-label{font-size:8px;color:#8da2b6;letter-spacing:1px;text-align:right}.xiga-confidence-value{font-size:31px;font-weight:950;color:#f3f9ff;text-align:right;margin:2px 0}.xiga-bar{height:6px;background:#0b3046;border-radius:8px;overflow:hidden}.xiga-bar span{display:block;height:100%;background:#20e7a0;border-radius:8px}
+.xiga-levels{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:8px}.xiga-level{border:1px solid #0a5d88;border-radius:12px;background:#041726;padding:9px 6px;text-align:center}.xiga-level-label{font-size:7px;color:#8ca0b2;letter-spacing:.7px}.xiga-level-value{font-size:14px;font-weight:900;margin-top:4px}.xiga-level-value.entry{color:#eef8ff}.xiga-level-value.tp{color:#20e7a0}.xiga-level-value.sl{color:#ff4052}
+.xiga-live-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}.xiga-mini{border:1px solid #0a547d;border-radius:13px;background:#041523;padding:10px}.xiga-mini-label{font-size:7px;color:#8399ad;letter-spacing:1px}.xiga-mini-value{font-size:20px;font-weight:950;color:#eef8ff;margin-top:3px}.xiga-mini-sub{font-size:8px;color:#20e7a0;margin-top:3px}
+.xiga-chart-card{margin-top:10px;border:1px solid #0a5b87;border-radius:17px;background:#041421;overflow:hidden;padding:6px 6px 4px}.xiga-chart-title{font-size:10px;font-weight:900;color:#dbeaf5;padding:5px 6px 1px}.xiga-chart-meta{font-size:7px;color:#6f8ca2;text-align:center;letter-spacing:.4px;margin-top:-3px}.xiga-chart-empty{border:1px solid #16435e;border-radius:14px;padding:35px 10px;text-align:center;color:#8098ac;font-size:10px}.xiga-chart-empty span{font-size:8px}
+.xiga-why{display:flex;gap:10px;align-items:center}.xiga-why-icon{width:35px;height:35px;border-radius:11px;background:#13280d;border:1px solid #657d20;display:flex;align-items:center;justify-content:center;font-size:18px}.xiga-why-title{color:#f0f8ff;font-weight:900;font-size:12px}.xiga-why-text{color:#8da2b5;font-size:9px;line-height:1.45;margin-top:3px}.xiga-tech-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}.xiga-tech{border:1px solid #104e70;border-radius:10px;background:#051827;padding:7px 4px;text-align:center}.xiga-tech b{display:block;color:#7790a5;font-size:7px}.xiga-tech span{display:block;color:#e9f6ff;font-size:11px;font-weight:900;margin-top:3px}
+.xiga-status-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.xiga-status-item{border:1px solid #0d5377;border-radius:12px;background:#041624;padding:9px;text-align:center}.xiga-status-label{font-size:7px;color:#8299ad;letter-spacing:.8px}.xiga-status-value{font-size:11px;font-weight:900;color:#edf8ff;margin-top:4px}.green{color:#20e7a0 !important}.red{color:#ff4052 !important}
+.stButton>button{min-height:50px !important;border-radius:15px !important;border:1px solid #5af7c1 !important;background:linear-gradient(100deg,#11cf8b,#2ff1ad) !important;color:#02130c !important;font-weight:950 !important;font-size:14px !important;box-shadow:0 0 22px rgba(32,231,160,.17) !important}.stButton>button:disabled{background:#0b3550 !important;color:#7391a5 !important;border-color:#1d5d80 !important;box-shadow:none !important}
+.xiga-analyze-wrap{margin-top:12px}.xiga-analyze-sub{text-align:center;color:#688298;font-size:8px;margin-top:5px}.xiga-bottom{position:fixed;z-index:9999;left:50%;bottom:0;transform:translateX(-50%);width:min(920px,100%);padding:7px 8px calc(7px + env(safe-area-inset-bottom));background:rgba(2,10,18,.97);backdrop-filter:blur(12px);border-top:1px solid #124361}.xiga-bottom .stButton>button{min-height:48px !important;border:0 !important;background:transparent !important;box-shadow:none !important;color:#8ea5b8 !important;font-size:9px !important;padding:4px !important}.xiga-bottom .stButton>button:hover{color:#20e7a0 !important}
+.xiga-backtest-grid,.xiga-stat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:7px;margin-top:10px}.xiga-stat-box{border:1px solid #0d5275;border-radius:12px;background:#041624;padding:10px;text-align:center}.xiga-stat-box b{display:block;font-size:7px;color:#8198aa}.xiga-stat-box span{display:block;font-size:17px;font-weight:950;color:#edf8ff;margin-top:4px}.xiga-history-item{border:1px solid #0d4e70;border-radius:13px;background:#041521;padding:10px;margin-top:7px}.xiga-history-top{display:flex;justify-content:space-between;font-size:11px;font-weight:900}.xiga-history-sub{font-size:8px;color:#8197aa;line-height:1.6;margin-top:4px}.xiga-history-result{margin-top:5px;font-size:8px;font-weight:900}.xiga-account-card{border:1px solid #0d5a80;border-radius:15px;background:#041624;padding:12px}.xiga-account-label{font-size:7px;color:#7e96aa;letter-spacing:1px}.xiga-account-value{font-size:13px;color:#f0f8ff;font-weight:900;margin-top:4px;word-break:break-all}.xiga-profile-levels{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}.xiga-profile-level{border:1px solid #0b4e70;border-radius:10px;padding:8px 4px;text-align:center}.xiga-profile-level b{display:block;color:#7891a4;font-size:7px}.xiga-profile-level span{display:block;color:#20e7a0;font-size:11px;font-weight:900;margin-top:4px}.xiga-footer{text-align:center;color:#4d687c;font-size:7px;letter-spacing:1px;margin:12px 0 4px}.xiga-muted{color:#8198aa;font-size:9px;line-height:1.5}.xiga-note{color:#7891a5;font-size:8px;line-height:1.5;margin-top:8px}
+@media(max-width:600px){[data-testid="stMainBlockContainer"]{padding-left:6px !important;padding-right:6px !important}.xiga-logo{font-size:21px}.xiga-direction{font-size:44px}.xiga-tech-grid{grid-template-columns:repeat(2,1fr)}.xiga-levels{gap:5px}.xiga-level-value{font-size:12px}.xiga-status-grid{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:390px){.xiga-direction{font-size:38px}.xiga-confidence-value{font-size:27px}.xiga-level-label{font-size:6px}.xiga-level-value{font-size:10px}.xiga-logo{font-size:19px}}
+</style>
+''', unsafe_allow_html=True)
 
 
-@st.fragment(run_every="1s")
 def dashboard_page():
     resolve_trade_if_ready()
+    perform_pending_analysis()
     provider_options = EXCHANGE_PROVIDERS
-    current_provider = st.session_state.get("provider", "BiQuote")
-    if current_provider not in provider_options:
-        current_provider = "BiQuote"
-
-    st.markdown('<div class="xiga-card">', unsafe_allow_html=True)
-    c1, c2 = st.columns(2)
-    with c1:
-        provider = st.selectbox("Platform", provider_options, index=provider_options.index(current_provider), key="provider")
-    if provider == "BiQuote":
-        category_options = list(ASSETS.keys())
-        default_category = st.session_state.get("category", category_options[0])
-        if default_category not in category_options:
-            default_category = category_options[0]
-        with c2:
-            category = st.selectbox("Market", category_options, index=category_options.index(default_category), key="category")
-        asset_map = ASSETS.get(category) or {}
-    else:
-        asset_map = EXCHANGE_ASSETS[provider]
-        with c2:
-            st.selectbox("Market", ["Crypto / USDT"], disabled=True, key=f"asset_type_{provider}")
-
-    asset_names = list(asset_map.keys())
-    if not asset_names:
-        st.error("No instruments are currently available for this platform.")
-        st.markdown('</div>', unsafe_allow_html=True)
-        return
-    current_asset = st.session_state.get("asset")
-    if current_asset not in asset_names:
-        current_asset = asset_names[0]
-    display_asset = st.selectbox("Asset", asset_names, index=asset_names.index(current_asset), key="asset")
-    timeframe = st.selectbox("Timeframe", list(TIMEFRAMES.keys()), index=list(TIMEFRAMES.keys()).index(st.session_state.get("timeframe", "1 MIN")) if st.session_state.get("timeframe", "1 MIN") in TIMEFRAMES else 0, key="timeframe")
-    provider_note = "BiQuote" if provider == "BiQuote" else provider
-    st.markdown(f'<div class="xiga-market-status">● LIVE MARKET READY • {provider_note} • {catalog_status if provider == "BiQuote" else "PUBLIC API"}</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    analysis_pending = st.session_state.get("analysis_pending")
+    provider = st.session_state.get("provider", "Binance")
+    if provider not in provider_options:
+        provider = "Binance"
     trade_pending = st.session_state.get("trade_pending")
-    busy = bool(analysis_pending or trade_pending)
+    analysis_pending = st.session_state.get("analysis_pending")
+    controls_disabled = bool(trade_pending or analysis_pending)
 
-    if analysis_pending:
-        remaining = seconds_until(analysis_pending.get("complete_at"))
-        st.info(f"🔄 XIGA is analyzing {analysis_pending.get('asset')} • {format_countdown(remaining)} remaining")
-    elif trade_pending:
-        st.caption(f"Trade active — XIGA is monitoring live price every second. {format_countdown(seconds_until(trade_pending.get('complete_at')))} remaining.")
+    st.markdown('<div class="xiga-app">', unsafe_allow_html=True)
+    st.markdown(f'''<div class="xiga-header"><div><div class="xiga-logo"><b>XI</b>GA PRO</div><div class="xiga-tag">TRADE SMARTER</div></div><div class="xiga-live-box"><span class="xiga-live-dot"></span><span class="xiga-live-text">LIVE MARKET</span><span class="xiga-live-sub">{provider} • PUBLIC DATA <span class="xiga-pro">♛ PRO</span></span></div></div>''', unsafe_allow_html=True)
 
-    if not busy:
-        if st.button("⚡ ANALYZE MARKET", key="analyze_button", use_container_width=True):
-            symbol = asset_map[display_asset]
-            now_utc = datetime.now(timezone.utc)
-            st.session_state.analysis_pending = {
-                "id": now_utc.isoformat(), "asset": display_asset, "symbol": symbol, "provider": provider,
-                "timeframe": timeframe, "started_at": now_utc.isoformat(),
-                "complete_at": (now_utc + timedelta(seconds=4)).isoformat(),
-            }
-            st.session_state.trade_pending = None
-            st.session_state.result = {
-                "success": False, "signal": "READY", "strength": 0,
-                "probability": None, "status": "ANALYSIS IN PROGRESS",
-                "description": "Fetching fresh candles and checking the market setup..."
-            }
-            st.rerun()
+    st.markdown('<div class="xiga-selector-card">', unsafe_allow_html=True)
+    c1,c2,c3 = st.columns(3)
+    with c1:
+        provider = st.selectbox("Platform", provider_options, index=provider_options.index(provider), key="provider", disabled=controls_disabled)
+    if provider == "BiQuote":
+        categories=list(ASSETS.keys())
+        category=st.session_state.get("category", categories[0])
+        if category not in categories: category=categories[0]
+        with c2:
+            category=st.selectbox("Market", categories, index=categories.index(category), key="category", disabled=controls_disabled)
+        asset_map=ASSETS.get(category) or {}
     else:
-        st.button("⏳ ANALYZING / TRADE ACTIVE", disabled=True, use_container_width=True)
-
-    result = st.session_state.result
-    if analysis_pending:
-        st.markdown(render_result_card({"signal":"NO TRADE","status":"ANALYSIS IN PROGRESS","probability":None,"description":"XIGA is checking trend, momentum, volatility and market data quality."}, timeframe), unsafe_allow_html=True)
-    elif result.get("success") or result.get("status") in ("WIN","LOSS","EXPIRED"):
-        st.markdown(render_result_card(result, timeframe), unsafe_allow_html=True)
-    else:
-        st.markdown(render_result_card({"signal":"NO TRADE","status":"READY","probability":None,"description":"Select the market, asset and timeframe, then tap ANALYZE MARKET."}, timeframe), unsafe_allow_html=True)
-
-    # Compact chart only after data is available; it is not required to make a decision.
-    if result.get("success") and not analysis_pending:
-        try:
-            candles, _ = get_candles(provider, asset_map[display_asset], TIMEFRAMES[timeframe], fresh=False)
-            closed = completed_candles(candles, TIMEFRAMES[timeframe])
-            if closed:
-                import pandas as pd
-                chart_rows = [{"Time": parse_candle_time(c["datetime"]), "Price": float(c["close"])} for c in closed[-45:]]
-                if chart_rows:
-                    st.markdown('<div class="xiga-card"><div class="xiga-section-title">Live Price</div>', unsafe_allow_html=True)
-                    st.line_chart(pd.DataFrame(chart_rows).set_index("Time"), height=190, use_container_width=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
-        except Exception:
-            pass
-
-    # Market status is deliberately compact.
-    if result.get("success"):
-        signal = result.get("signal")
-        st.markdown(f"""
-<div class="xiga-card"><div class="xiga-section-title">Market Status</div>
-<div class="xiga-status-grid">
-<div class="xiga-status-item"><div class="xiga-status-label">TREND</div><div class="xiga-status-value {"green" if signal=="CALL" else "red" if signal=="PUT" else ""}">{"UPTREND" if signal=="CALL" else "DOWNTREND" if signal=="PUT" else "MIXED"}</div></div>
-<div class="xiga-status-item"><div class="xiga-status-label">VOLATILITY</div><div class="xiga-status-value">{"NORMAL" if result.get("atr") is not None else "UNKNOWN"}</div></div>
-<div class="xiga-status-item"><div class="xiga-status-label">MOMENTUM</div><div class="xiga-status-value {"green" if result.get("macd",0) and result.get("macd",0)>0 else "red" if result.get("macd",0) and result.get("macd",0)<0 else ""}">{"STRONG" if abs(result.get("score",0))>=4 else "MODERATE"}</div></div>
-</div></div>""", unsafe_allow_html=True)
-
-    st.markdown('<div class="xiga-footer">🔒 SECURE • XIGA PRO • LIVE MARKET ANALYSIS • NO AUTOMATIC TRADE EXECUTION</div>', unsafe_allow_html=True)
-
-
-def analysis_page():
-    result = st.session_state.get("result") or {}
-    if not result.get("success"):
-        st.markdown('<div class="xiga-card"><div class="xiga-section-title">📊 Analysis</div><div class="xiga-muted">Run an analysis from Dashboard first. This page shows the details behind the latest XIGA signal.</div></div>', unsafe_allow_html=True)
+        with c2:
+            st.selectbox("Market", ["Crypto / USDT"], key="exchange_market_display", disabled=True)
+        asset_map=EXCHANGE_ASSETS[provider]
+    with c3:
+        tf_default=st.session_state.get("timeframe","1 MIN")
+        timeframe=st.selectbox("Timeframe", list(TIMEFRAMES.keys()), index=list(TIMEFRAMES.keys()).index(tf_default) if tf_default in TIMEFRAMES else 0, key="timeframe", disabled=controls_disabled)
+    asset_names=list(asset_map.keys())
+    if not asset_names:
+        st.error("No instruments are currently available.")
+        st.markdown('</div></div>',unsafe_allow_html=True)
         return
-    st.markdown('<div class="xiga-card">', unsafe_allow_html=True)
-    st.markdown('<div class="xiga-section-title">📊 Signal Analysis</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="xiga-muted">{signal_label(result.get("signal"))} • {st.session_state.get("timeframe","1 MIN")} • {result.get("status","READY")}</div>', unsafe_allow_html=True)
-    rsi_value = result.get("rsi")
-    macd_value = result.get("macd")
-    hist_rate = result.get("historical_rate")
-    items = [
-        ("EMA / TREND", "Bullish" if result.get("signal")=="CALL" else "Bearish" if result.get("signal")=="PUT" else "Mixed"),
-        ("RSI", f"{rsi_value:.1f}" if rsi_value is not None else "—"),
-        ("MACD", f"{macd_value:.6f}" if macd_value is not None else "—"),
-        ("SCORE", f"{int(result.get('score',0)):+d}"),
-        ("HISTORICAL SETUPS", str(result.get("historical_samples",0))),
-        ("HISTORICAL RATE", f"{hist_rate*100:.1f}%" if hist_rate is not None else "—"),
-    ]
-    html = '<div class="xiga-analysis-grid">' + ''.join(f'<div class="xiga-analysis-item"><b>{a}</b><span>{b}</span></div>' for a,b in items) + '</div>'
-    st.markdown(html, unsafe_allow_html=True)
-    st.markdown('<div class="xiga-section-title" style="margin-top:14px">Why XIGA generated this</div>', unsafe_allow_html=True)
-    reasons = result.get("reasons") or [result.get("description", "No detailed reason available.")]
-    for reason in reasons[:10]:
-        st.markdown(f'<div class="xiga-reason">• {reason}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="xiga-muted" style="margin-top:10px">Data: {result.get("status","—")}<br>News: {result.get("news_status","—")}</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    current_asset=st.session_state.get("asset",asset_names[0])
+    if current_asset not in asset_names: current_asset=asset_names[0]
+    display_asset=st.selectbox("Asset",asset_names,index=asset_names.index(current_asset),key="asset",disabled=controls_disabled)
+    st.markdown(f'<div class="xiga-market-ready">● LIVE MARKET READY • {provider} • {catalog_status if provider=="BiQuote" else "PUBLIC API"}</div>',unsafe_allow_html=True)
+    st.markdown('</div>',unsafe_allow_html=True)
+
+    symbol=asset_map[display_asset]
+    resolution=TIMEFRAMES[timeframe]
+    result=st.session_state.get("result") or {}
+    signal=result.get("signal","NO TRADE")
+    display_signal=signal_display(signal)
+    status=result.get("status","READY")
+    probability=result.get("probability")
+    probability_text=f'{int(probability)}%' if probability is not None else '—'
+
+    if analysis_pending:
+        remaining=seconds_until(analysis_pending.get("complete_at"))
+        progress=max(5,min(100,int((ANALYSIS_SECONDS-remaining)/ANALYSIS_SECONDS*100)))
+        st.markdown(f'''<div class="xiga-signal-card neutral"><div class="xiga-signal-head"><span>XIGA SIGNAL • ANALYZING</span><span class="xiga-badge live">LIVE</span></div><div class="xiga-signal-main"><div class="xiga-direction neutral-text">ANALYZING</div><div><div class="xiga-confidence-label">ANALYSIS TIME</div><div class="xiga-confidence-value">{format_countdown(remaining)}</div><div class="xiga-bar"><span style="width:{progress}%"></span></div></div></div><div class="xiga-why"><div class="xiga-why-icon">⚡</div><div><div class="xiga-why-title">XIGA is checking the market</div><div class="xiga-why-text">Trend • momentum • volatility • structure • data quality</div></div></div></div>''',unsafe_allow_html=True)
+    else:
+        if signal not in ("CALL","PUT","NO TRADE"): signal="NO TRADE"
+        card_class=signal_color_class(signal)
+        badge="WIN" if status=="WIN" else "LOSS" if status=="LOSS" else "EXPIRED" if status=="EXPIRED" else "LIVE"
+        badge_class="win" if status=="WIN" else "loss" if status=="LOSS" else "expired" if status=="EXPIRED" else "live"
+        direction=f'{"↑" if signal=="CALL" else "↓"} {display_signal}' if signal in ("CALL","PUT") else "— NO TRADE"
+        entry=result.get("entry_price") or result.get("price")
+        tp=result.get("take_profit")
+        sl=result.get("stop_loss")
+        levels=''
+        if entry is not None and tp is not None and sl is not None and signal in ("CALL","PUT"):
+            levels=f'''<div class="xiga-levels"><div class="xiga-level"><div class="xiga-level-label">{"BUY AT" if signal=="CALL" else "SELL AT"}</div><div class="xiga-level-value entry">{float(entry):.8g}</div></div><div class="xiga-level"><div class="xiga-level-label">TAKE PROFIT</div><div class="xiga-level-value tp">{float(tp):.8g}</div></div><div class="xiga-level"><div class="xiga-level-label">STOP LOSS</div><div class="xiga-level-value sl">{float(sl):.8g}</div></div></div>'''
+        if trade_pending:
+            timer=format_countdown(seconds_until(trade_pending.get("complete_at"))); live_status="MONITORING LIVE PRICE"
+        elif status=="WIN": timer=result.get("tp_hit_elapsed") or result.get("result_time") or "—"; live_status="TAKE PROFIT HIT"
+        elif status=="LOSS": timer=result.get("result_time") or "—"; live_status="STOP LOSS HIT"
+        elif status=="EXPIRED": timer=result.get("result_time") or "—"; live_status="TRADE WINDOW EXPIRED"
+        else: timer="READY"; live_status="WAITING FOR ANALYSIS"
+        reason=result.get("result_reason") or result.get("description") or "Select your market, asset and timeframe, then analyze the market."
+        st.markdown(f'''<div class="xiga-signal-card {card_class}"><div class="xiga-signal-head"><span>XIGA SIGNAL • {timeframe}</span><span class="xiga-badge {badge_class}">{badge}</span></div><div class="xiga-signal-main"><div class="xiga-direction {"buy-text" if signal=="CALL" else "sell-text" if signal=="PUT" else "neutral-text"}>{direction}</div><div><div class="xiga-confidence-label">CONFIDENCE</div><div class="xiga-confidence-value">{probability_text}</div><div class="xiga-bar"><span style="width:{int(probability or 0)}%"></span></div></div></div>{levels}</div>''',unsafe_allow_html=True)
+        tick,_=get_latest_tick(provider,symbol,fresh=True)
+        live_price=float(tick["price"]) if tick else (float(trade_pending.get("live_price")) if trade_pending and trade_pending.get("live_price") else None)
+        if trade_pending and live_price is not None: trade_pending["live_price"]=live_price
+        entry_for_delta=float(entry) if entry is not None else live_price
+        delta=(live_price-entry_for_delta) if live_price is not None and entry_for_delta is not None else 0
+        delta_pct=(delta/entry_for_delta*100) if entry_for_delta else 0
+        st.markdown(f'''<div class="xiga-live-grid"><div class="xiga-mini"><div class="xiga-mini-label">TRADE TIMER</div><div class="xiga-mini-value">{timer}</div><div class="xiga-mini-sub">{timeframe} • {live_status}</div></div><div class="xiga-mini"><div class="xiga-mini-label">LIVE PRICE</div><div class="xiga-mini-value">{f'{live_price:.8g}' if live_price is not None else '—'}</div><div class="xiga-mini-sub">{delta:+.8g} ({delta_pct:+.2f}%)</div></div></div>''',unsafe_allow_html=True)
+
+    st.markdown('<div class="xiga-chart-card"><div class="xiga-chart-title">LIVE CANDLES</div>',unsafe_allow_html=True)
+    render_candlestick_chart(provider,symbol,resolution,timeframe,trade_pending)
+    st.markdown('</div>',unsafe_allow_html=True)
+
+    if result.get("success"):
+        reasons=result.get("reasons") or [result.get("description","Current market conditions were analyzed.")]
+        short_reason=" • ".join(reasons[:3])
+        rsi_value=result.get("rsi"); macd_value=result.get("macd")
+        trend="UPTREND" if signal=="CALL" else "DOWNTREND" if signal=="PUT" else "MIXED"
+        momentum="STRONG" if abs(float(result.get("score",0)))>=4 else "MODERATE"
+        volatility="NORMAL" if result.get("atr") is not None else "UNKNOWN"
+        st.markdown(f'''<div class="xiga-card"><div class="xiga-why"><div class="xiga-why-icon">💡</div><div><div class="xiga-why-title">Why this signal?</div><div class="xiga-why-text">{short_reason}</div></div></div><div class="xiga-tech-grid"><div class="xiga-tech"><b>RSI</b><span>{f'{rsi_value:.1f}' if rsi_value is not None else '—'}</span></div><div class="xiga-tech"><b>MACD</b><span>{f'{macd_value:.5f}' if macd_value is not None else '—'}</span></div><div class="xiga-tech"><b>EMA TREND</b><span>{trend}</span></div><div class="xiga-tech"><b>MOMENTUM</b><span>{momentum}</span></div></div></div>''',unsafe_allow_html=True)
+        st.markdown(f'''<div class="xiga-card"><div class="xiga-section-title" style="font-size:12px">Market Status</div><div class="xiga-status-grid"><div class="xiga-status-item"><div class="xiga-status-label">TREND</div><div class="xiga-status-value {"green" if trend=="UPTREND" else "red" if trend=="DOWNTREND" else ""}">{trend}</div></div><div class="xiga-status-item"><div class="xiga-status-label">VOLATILITY</div><div class="xiga-status-value">{volatility}</div></div><div class="xiga-status-item"><div class="xiga-status-label">DATA</div><div class="xiga-status-value green">CONNECTED</div></div></div><div class="xiga-note">News: {result.get("news_status","Not used")} • Historical setup sample: {result.get("historical_samples",0)}</div></div>''',unsafe_allow_html=True)
+
+    st.markdown('<div class="xiga-analyze-wrap">',unsafe_allow_html=True)
+    if not analysis_pending and not trade_pending:
+        if st.button("⚡  ANALYZE MARKET",key="analyze_market_bottom",use_container_width=True):
+            now=datetime.now(timezone.utc)
+            st.session_state.analysis_pending={"id":now.isoformat(),"asset":display_asset,"symbol":symbol,"provider":provider,"timeframe":timeframe,"started_at":now.isoformat(),"complete_at":(now+timedelta(seconds=ANALYSIS_SECONDS)).isoformat()}
+            st.session_state.result={"success":False,"signal":"NO TRADE","strength":0,"probability":None,"status":"ANALYSIS IN PROGRESS","description":"Fetching fresh market data..."}
+            st.rerun()
+    elif analysis_pending:
+        st.button("⏳  ANALYZING MARKET...",disabled=True,use_container_width=True)
+    else:
+        st.button("●  TRADE ACTIVE — MONITORING",disabled=True,use_container_width=True)
+    st.markdown('<div class="xiga-analyze-sub">XIGA analyzes fresh market data before every signal.</div></div>',unsafe_allow_html=True)
+    st.markdown('<div class="xiga-footer">🔒 SECURE • XIGA PRO • LIVE MARKET ANALYSIS • NO AUTOMATIC TRADE EXECUTION</div>',unsafe_allow_html=True)
+    st.markdown('</div>',unsafe_allow_html=True)
 
 
 def backtest_page():
-    st.markdown('<div class="xiga-card">', unsafe_allow_html=True)
-    st.markdown('<div class="xiga-section-title">🧪 XIGA Backtest</div>', unsafe_allow_html=True)
-    st.markdown('<div class="xiga-muted">Test the same core indicator logic against historical completed candles. Historical performance does not guarantee future results.</div>', unsafe_allow_html=True)
-    bt_mode = st.radio("Backtest depth", ["STANDARD • 5,000 CANDLES", "DEEP • 10,000 CANDLES"], horizontal=True, key="backtest_mode")
-    target_count = BACKTEST_DEEP_CANDLES if bt_mode.startswith("DEEP") else BACKTEST_STANDARD_CANDLES
-    provider = st.selectbox("Platform", EXCHANGE_PROVIDERS, key="backtest_provider")
-    if provider == "BiQuote":
-        category = st.selectbox("Market", list(ASSETS.keys()), key="backtest_category")
-        asset_map = ASSETS.get(category) or {}
+    st.markdown('<div class="xiga-app">',unsafe_allow_html=True)
+    st.markdown('<div class="xiga-page-card"><div class="xiga-page-title">🧪 Backtest</div><div class="xiga-page-sub">Test XIGA against historical completed candles. Historical performance does not guarantee future results.</div></div>',unsafe_allow_html=True)
+    bt_mode=st.radio("Backtest depth",["STANDARD • 5,000 CANDLES","DEEP • 10,000 CANDLES"],horizontal=True,key="backtest_mode")
+    target_count=BACKTEST_DEEP_CANDLES if bt_mode.startswith("DEEP") else BACKTEST_STANDARD_CANDLES
+    provider=st.selectbox("Platform",EXCHANGE_PROVIDERS,key="backtest_provider")
+    if provider=="BiQuote":
+        category=st.selectbox("Market",list(ASSETS.keys()),key="backtest_category"); asset_map=ASSETS.get(category) or {}
     else:
-        st.selectbox("Market", ["Crypto / USDT"], disabled=True, key=f"backtest_type_{provider}")
-        asset_map = EXCHANGE_ASSETS[provider]
-    asset_names = list(asset_map.keys())
+        st.selectbox("Market",["Crypto / USDT"],disabled=True,key=f"backtest_market_{provider}"); asset_map=EXCHANGE_ASSETS[provider]
+    asset_names=list(asset_map.keys())
     if asset_names:
-        asset = st.selectbox("Asset", asset_names, key="backtest_asset")
-        timeframe = st.selectbox("Timeframe", list(TIMEFRAMES.keys()), key="backtest_timeframe")
-        if st.button("🧪 RUN BACKTEST", key="run_backtest", use_container_width=True):
-            with st.spinner(f"Downloading and testing {target_count:,} completed candles..."):
-                st.session_state.backtest_result = run_xiga_backtest(provider, asset_map[asset], timeframe, target_count)
-        bt = st.session_state.get("backtest_result")
+        asset=st.selectbox("Asset",asset_names,key="backtest_asset"); timeframe=st.selectbox("Timeframe",list(TIMEFRAMES.keys()),key="backtest_timeframe")
+        if st.button("🧪 RUN BACKTEST",key="run_backtest",use_container_width=True):
+            with st.spinner(f"Downloading and testing {target_count:,} completed candles..."): st.session_state.backtest_result=run_xiga_backtest(provider,asset_map[asset],timeframe,target_count)
+        bt=st.session_state.get("backtest_result")
         if bt:
             if not bt.get("success"):
-                st.error(bt.get("error", "Backtest failed."))
-                st.caption(bt.get("status", ""))
+                st.error(bt.get("error","Backtest failed.")); st.caption(bt.get("status",""))
             else:
-                st.markdown(f'<div class="xiga-analysis-grid">'
-                            f'<div class="xiga-analysis-item"><b>COMPLETED CANDLES</b><span>{bt["candles"]:,}</span></div>'
-                            f'<div class="xiga-analysis-item"><b>BUY SIGNALS</b><span>{bt["calls"]:,}</span></div>'
-                            f'<div class="xiga-analysis-item"><b>SELL SIGNALS</b><span>{bt["puts"]:,}</span></div>'
-                            f'<div class="xiga-analysis-item"><b>WIN RATE</b><span>{bt["accuracy"]:.1f}%</span></div>'
-                            f'<div class="xiga-analysis-item"><b>TP HITS</b><span>{bt["tp_hits"]:,}</span></div>'
-                            f'<div class="xiga-analysis-item"><b>TP RATE</b><span>{bt["tp_rate"]:.1f}%</span></div>'
-                            f'</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="xiga-muted" style="margin-top:10px">Total signals: {bt["signals"]:,} • Wins: {bt["wins"]:,} • Losses: {bt["losses"]:,} • Draws: {bt["draws"]:,}<br>BUY accuracy: {bt["call_accuracy"]:.1f}% • SELL accuracy: {bt["put_accuracy"]:.1f}%<br>Average favorable movement: {bt["avg_favorable"]:.3f}%</div>', unsafe_allow_html=True)
-                if bt.get("validation_ok"):
-                    st.success("Historical validation thresholds met.")
-                else:
-                    st.warning("Historical validation thresholds not met.")
-                st.caption(bt.get("validation_reason", "Historical validation only."))
-                st.caption("Validation thresholds: at least 100 historical signals, ≥55% directional accuracy, and ≥50% TP-hit rate. These are historical checks, not guarantees.")
-    st.markdown('</div>', unsafe_allow_html=True)
+                st.markdown(f'''<div class="xiga-backtest-grid"><div class="xiga-stat-box"><b>COMPLETED CANDLES</b><span>{bt["candles"]:,}</span></div><div class="xiga-stat-box"><b>TOTAL SIGNALS</b><span>{bt["signals"]:,}</span></div><div class="xiga-stat-box"><b>WINS</b><span class="green">{bt["wins"]:,}</span></div><div class="xiga-stat-box"><b>LOSSES</b><span class="red">{bt["losses"]:,}</span></div><div class="xiga-stat-box"><b>WIN RATE</b><span>{bt["accuracy"]:.1f}%</span></div><div class="xiga-stat-box"><b>TP RATE</b><span>{bt["tp_rate"]:.1f}%</span></div></div>''',unsafe_allow_html=True)
+                st.markdown(f'<div class="xiga-note">BUY signals: {bt["calls"]:,} • SELL signals: {bt["puts"]:,}<br>BUY accuracy: {bt["call_accuracy"]:.1f}% • SELL accuracy: {bt["put_accuracy"]:.1f}%<br>TP hits: {bt["tp_hits"]:,} • TP not reached: {bt["tp_misses"]:,}<br>Average favorable movement: {bt["avg_favorable"]:.3f}%</div>',unsafe_allow_html=True)
+                if bt.get("validation_ok"): st.success("Historical validation thresholds met.")
+                else: st.warning("Historical validation thresholds not met.")
+                st.caption(bt.get("validation_reason","Historical validation only."))
+                st.caption("Validation checks are historical only: at least 100 signals, ≥55% directional accuracy and ≥50% TP-hit rate. They are not future guarantees.")
+    st.markdown('</div>',unsafe_allow_html=True)
 
 
 def history_page():
-    st.markdown('<div class="xiga-card">', unsafe_allow_html=True)
-    st.markdown('<div class="xiga-section-title">📜 Signal History</div>', unsafe_allow_html=True)
+    st.markdown('<div class="xiga-app">',unsafe_allow_html=True)
+    st.markdown('<div class="xiga-page-card"><div class="xiga-page-title">📜 History</div><div class="xiga-page-sub">Recorded XIGA live signals from this session.</div></div>',unsafe_allow_html=True)
     if not st.session_state.history:
-        st.markdown('<div class="xiga-muted">No live signals have been generated yet.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="xiga-page-card"><div class="xiga-muted">No live signals have been generated yet.</div></div>',unsafe_allow_html=True)
     else:
         for item in st.session_state.history[:30]:
-            status = item.get("status", "PENDING")
-            status_cls = "win" if status == "WIN" else "loss" if status == "LOSS" else "expired"
-            direction = signal_label(item.get("signal"))
-            st.markdown(f"""
-<div class="xiga-history-item"><div class="xiga-history-top"><span>{item.get("asset","—")}</span><span>{direction}</span></div>
-<div class="xiga-history-sub">{item.get("provider","—")} • {item.get("timeframe","—")} • {item.get("time","—")}<br>Entry: {item.get("price","—")} • TP: {item.get("take_profit","—")} • SL: {item.get("stop_loss","—")}</div>
-<div class="xiga-history-result {status_cls}">{status} {("• TP HIT IN " + str(item.get("tp_hit_elapsed"))) if status == "WIN" and item.get("tp_hit_elapsed") else ""}</div></div>
-""", unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+            status=item.get("status","PENDING"); cls="green" if status=="WIN" else "red" if status=="LOSS" else ""
+            st.markdown(f'''<div class="xiga-history-item"><div class="xiga-history-top"><span>{item.get("asset","—")}</span><span class="{cls}">{signal_display(item.get("signal"))}</span></div><div class="xiga-history-sub">{item.get("provider","—")} • {item.get("timeframe","—")} • {item.get("time","—")}<br>Entry: {item.get("price","—")} • TP: {item.get("take_profit","—")} • SL: {item.get("stop_loss","—")}</div><div class="xiga-history-result {cls}">{status}{(" • TP HIT IN " + str(item.get("tp_hit_elapsed"))) if status=="WIN" and item.get("tp_hit_elapsed") else ""}{(" • " + str(item.get("result_reason"))) if status in ("LOSS","EXPIRED") else ""}</div></div>''',unsafe_allow_html=True)
+    st.markdown('</div>',unsafe_allow_html=True)
 
 
 def profile_page():
-    status = get_subscription_status() or st.session_state.get("xiga_status") or {}
-    email = st.session_state.get("xiga_email") or status.get("email") or "Account"
-    active = bool(status.get("active", True))
-    expiry = status.get("subscription_expires_at") or "—"
-    days = status.get("days_remaining", 0)
-    expiry_short = str(expiry)[:10] if expiry != "—" else "—"
-    total = len(st.session_state.history)
-    wins = sum(1 for x in st.session_state.history if x.get("status") == "WIN")
-    losses = sum(1 for x in st.session_state.history if x.get("status") == "LOSS")
-    expired = sum(1 for x in st.session_state.history if x.get("status") == "EXPIRED")
-    decided = wins + losses
-    observed_rate = wins / decided * 100 if decided else 0
-    tp_hit_rate = wins / total * 100 if total else 0
-
-    st.markdown('<div class="xiga-card">', unsafe_allow_html=True)
-    st.markdown('<div class="xiga-section-title">👤 Profile</div>', unsafe_allow_html=True)
-    st.markdown(f"""
-<div class="xiga-account-card"><div class="xiga-account-label">ACCOUNT EMAIL</div><div class="xiga-account-value">{email}</div>
-<div class="xiga-profile-levels"><div class="xiga-profile-level"><b>STATUS</b><span>{"ACTIVE" if active else "INACTIVE"}</span></div><div class="xiga-profile-level"><b>DAYS LEFT</b><span>{days}</span></div><div class="xiga-profile-level"><b>EXPIRES</b><span>{expiry_short}</span></div></div></div>
-""", unsafe_allow_html=True)
-
-    st.markdown('<div class="xiga-section-title">Quick Stats</div>', unsafe_allow_html=True)
-    st.markdown(f"""
-<div class="xiga-stat-grid"><div class="xiga-stat-box"><b>TOTAL SIGNALS</b><span>{total}</span></div><div class="xiga-stat-box"><b>WINS</b><span class="green">{wins}</span></div><div class="xiga-stat-box"><b>LOSSES</b><span class="red">{losses}</span></div><div class="xiga-stat-box"><b>EXPIRED</b><span>{expired}</span></div><div class="xiga-stat-box"><b>OBSERVED WIN RATE</b><span>{observed_rate:.1f}%</span></div><div class="xiga-stat-box"><b>TP HIT RATE</b><span>{tp_hit_rate:.1f}%</span></div></div>
-""", unsafe_allow_html=True)
-    st.caption("Quick Stats are your recorded XIGA live-signal history. They are not a forecast of future performance.")
-    if st.button("🚪 LOG OUT", key="profile_logout", use_container_width=True):
-        clear_session()
-        st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
+    status=get_subscription_status() or st.session_state.get("xiga_status") or {}
+    email=st.session_state.get("xiga_email") or status.get("email") or "Account"
+    active=bool(status.get("active",True)); expiry=status.get("subscription_expires_at") or "—"; days=status.get("days_remaining",0); expiry_short=str(expiry)[:10] if expiry!="—" else "—"
+    total=len(st.session_state.history); wins=sum(1 for x in st.session_state.history if x.get("status")=="WIN"); losses=sum(1 for x in st.session_state.history if x.get("status")=="LOSS"); expired=sum(1 for x in st.session_state.history if x.get("status")=="EXPIRED"); decided=wins+losses; observed_rate=wins/decided*100 if decided else 0; tp_hit_rate=wins/total*100 if total else 0
+    st.markdown('<div class="xiga-app">',unsafe_allow_html=True)
+    st.markdown(f'''<div class="xiga-page-card"><div class="xiga-page-title">👤 Profile</div><div class="xiga-account-card" style="margin-top:10px"><div class="xiga-account-label">ACCOUNT EMAIL</div><div class="xiga-account-value">{email}</div><div class="xiga-profile-levels"><div class="xiga-profile-level"><b>STATUS</b><span>{"ACTIVE" if active else "INACTIVE"}</span></div><div class="xiga-profile-level"><b>DAYS LEFT</b><span>{days}</span></div><div class="xiga-profile-level"><b>EXPIRES</b><span>{expiry_short}</span></div></div></div></div>''',unsafe_allow_html=True)
+    st.markdown(f'''<div class="xiga-page-card"><div class="xiga-page-title" style="font-size:14px">Quick Stats</div><div class="xiga-stat-grid"><div class="xiga-stat-box"><b>TOTAL SIGNALS</b><span>{total}</span></div><div class="xiga-stat-box"><b>WINS</b><span class="green">{wins}</span></div><div class="xiga-stat-box"><b>LOSSES</b><span class="red">{losses}</span></div><div class="xiga-stat-box"><b>EXPIRED</b><span>{expired}</span></div><div class="xiga-stat-box"><b>WIN RATE</b><span>{observed_rate:.1f}%</span></div><div class="xiga-stat-box"><b>TP HIT RATE</b><span>{tp_hit_rate:.1f}%</span></div></div><div class="xiga-note">These are recorded XIGA signals from your current session, not a prediction.</div></div>''',unsafe_allow_html=True)
+    if st.button("🚪 LOG OUT",key="profile_logout",use_container_width=True): clear_session(); st.rerun()
+    st.markdown('<div class="xiga-footer">XIGA PRO • ACCOUNT & SUBSCRIPTION</div></div>',unsafe_allow_html=True)
 
 
-if selected_page == "Dashboard":
-    dashboard_page()
-elif selected_page == "Analysis":
-    analysis_page()
-elif selected_page == "Backtest":
-    backtest_page()
-elif selected_page == "History":
-    history_page()
-elif selected_page == "Profile":
-    profile_page()
+def render_bottom_nav(active_page):
+    st.markdown('<div class="xiga-bottom">',unsafe_allow_html=True)
+    cols=st.columns(4); pages=[("⌂","Dashboard"),("◫","Backtest"),("◷","History"),("♙","Profile")]
+    for col,(icon,name) in zip(cols,pages):
+        with col:
+            if st.button(f"{icon}\n{name}",key=f"bottom_{name}",use_container_width=True): st.session_state.page=name; st.rerun()
+    st.markdown('</div>',unsafe_allow_html=True)
 
-st.caption("XIGA is a market-analysis assistant. It does not automatically place trades.")
+
+selected_page=st.session_state.get("page","Dashboard")
+if selected_page not in ("Dashboard","Backtest","History","Profile"): selected_page="Dashboard"
+if selected_page=="Dashboard":
+    @st.fragment(run_every="1s")
+    def dashboard_fragment(): dashboard_page()
+    dashboard_fragment()
+elif selected_page=="Backtest": backtest_page()
+elif selected_page=="History": history_page()
+elif selected_page=="Profile": profile_page()
+render_bottom_nav(selected_page)
