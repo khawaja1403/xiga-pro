@@ -1,7 +1,6 @@
 
 import streamlit as st
 import requests
-from streamlit_js import st_js_blocking
 import extra_streamlit_components as stx
 import base64
 import hashlib
@@ -218,107 +217,12 @@ def call_xiga_function(action, key=None):
     except requests.RequestException:
         return 0, {"error": "Unable to connect to XIGA subscription service."}
 
-def get_browser_recovery_hash():
-    """Read the recovery fragment/full URL from the browser."""
-    try:
-        value = st_js_blocking(
-            code="""
-            return (window.parent && window.parent.location && window.parent.location.href) || window.location.href || '';
-            """
-        )
-        return value or ""
-    except Exception:
-        return ""
-
-def handle_password_recovery():
-    # Supabase's implicit recovery flow returns access_token/refresh_token in
-    # the URL fragment. Detect it before rendering the normal login screen.
-    browser_url = get_browser_recovery_hash()
-    if browser_url:
-        try:
-            from urllib.parse import urlparse, parse_qs
-            parsed = urlparse(browser_url)
-            fragment = parse_qs(parsed.fragment, keep_blank_values=True)
-            if fragment.get("type", [""])[0] == "recovery" and fragment.get("access_token", [""])[0]:
-                st.session_state["xiga_recovery_token"] = fragment["access_token"][0]
-                st.session_state["xiga_recovery_refresh"] = fragment.get("refresh_token", [""])[0]
-                try:
-                    st_js_blocking(
-                        code="""
-                        if (window.parent && window.parent.history) {
-                            window.parent.history.replaceState({}, document.title, window.parent.location.pathname + window.parent.location.search);
-                        } else {
-                            history.replaceState({}, document.title, window.location.pathname + window.location.search);
-                        }
-                        return true;
-                        """
-                    )
-                except Exception:
-                    pass
-                st.rerun()
-        except Exception:
-            pass
-
-    access_token = st.session_state.get("xiga_recovery_token", "")
-    refresh_token = st.session_state.get("xiga_recovery_refresh", "")
-    if not access_token:
-        return False
-
-    render_auth_styles()
-    st.markdown("## RESET PASSWORD")
-    st.caption("Create a new password for your XIGA account.")
-    with st.form("xiga_password_reset"):
-        new_password = st.text_input("New password", type="password", placeholder="Enter your new password")
-        confirm_password = st.text_input("Confirm new password", type="password", placeholder="Confirm your new password")
-        reset = st.form_submit_button("SAVE NEW PASSWORD", use_container_width=True)
-
-    if reset:
-        if len(new_password) < 6:
-            st.error("Password must be at least 6 characters.")
-            st.stop()
-        if new_password != confirm_password:
-            st.error("Passwords do not match.")
-            st.stop()
-        try:
-            token = access_token
-            if refresh_token:
-                session_response = requests.post(
-                    f"{SUPABASE_URL}/auth/v1/token?grant_type=refresh_token",
-                    headers=auth_headers(),
-                    json={"refresh_token": refresh_token},
-                    timeout=15,
-                )
-                if session_response.status_code == 200:
-                    token = session_response.json().get("access_token", access_token)
-            response = requests.put(
-                f"{SUPABASE_URL}/auth/v1/user",
-                headers=auth_headers(token),
-                json={"password": new_password},
-                timeout=15,
-            )
-            if response.status_code == 200:
-                st.session_state.pop("xiga_recovery_token", None)
-                st.session_state.pop("xiga_recovery_refresh", None)
-                st.session_state["access_mode"] = "LOGIN"
-                st.success("Password updated successfully. Please log in with your new password.")
-                st.rerun()
-            else:
-                try:
-                    data = response.json()
-                    message = data.get("msg") or data.get("message") or data.get("error_description") or data.get("error")
-                except ValueError:
-                    message = response.text[:300] if response.text else "Unknown Supabase error."
-                st.error(message or "Unable to update the password. The reset link may have expired.")
-        except requests.RequestException:
-            st.error("Unable to connect to the XIGA account service.")
-    return True
-
 def render_auth_styles():
     st.markdown("""
 <style>
 html,body,[data-testid="stAppViewContainer"]{background:radial-gradient(circle at 50% -15%,#173957 0%,#0a1c30 28%,#030914 65%,#020711 100%) !important}
 [data-testid="stHeader"]{display:none !important}
-[data-testid="stAppViewContainer"] .main [data-testid="stMainBlockContainer"]{max-width:500px !important;padding-top:0 !important;padding-left:12px !important;padding-right:12px !important}
+[data-testid="stAppViewContainer"] .main [data-testid="stMainBlockContainer"]{max-width:500px !important;padding-top:0 !important;padding-left:12px !important;padding-right:12px !important;margin-top:0 !important}
 section[data-testid="stMain"] > div[data-testid="stMainBlockContainer"]{padding-top:0 !important}
 [data-testid="stMainBlockContainer"] .block-container{padding-top:0 !important}
 .block-container{padding-top:0 !important;margin-top:0 !important;padding-bottom:24px !important}
@@ -384,7 +288,7 @@ def xiga_subscription_login():
     st.markdown('<div class="xiga-auth-topbar"><div></div><div class="xiga-auth-brand"><span>▰</span> XIGA</div><div class="xiga-auth-pro-wrap"><div class="xiga-auth-pro">👑 PRO</div></div></div>', unsafe_allow_html=True)
     st.markdown('<div class="xiga-auth-title">XIGA <span>PRO</span><br>SECURE ACCESS</div>', unsafe_allow_html=True)
     st.markdown('<div class="xiga-auth-sub">Use your XIGA account to access the XIGA PRO trading app.</div>', unsafe_allow_html=True)
-    mode = st.radio("Access", ["LOGIN", "SIGN UP", "FORGOT PASSWORD"], horizontal=True, label_visibility="collapsed", key="access_mode")
+    mode = st.radio("Access", ["LOGIN", "SIGN UP"], horizontal=True, label_visibility="collapsed", key="access_mode")
 
     if mode == "LOGIN":
         with st.form("xiga_pro_login"):
@@ -1172,7 +1076,7 @@ st.markdown("""
 <style>
 html,body,[data-testid="stAppViewContainer"]{background:radial-gradient(circle at 50% -10%,#173957 0%,#0a1c30 25%,#030914 62%,#020711 100%) !important}
 [data-testid="stHeader"]{background:transparent !important}
-[data-testid="stAppViewContainer"] .main [data-testid="stMainBlockContainer"]{max-width:500px !important;padding-top:0 !important;padding-left:12px !important;padding-right:12px !important}
+[data-testid="stAppViewContainer"] .main [data-testid="stMainBlockContainer"]{max-width:500px !important;padding-top:0 !important;padding-left:12px !important;padding-right:12px !important;margin-top:0 !important}
 section[data-testid="stMain"] > div[data-testid="stMainBlockContainer"]{padding-top:0 !important}
 [data-testid="stMainBlockContainer"] .block-container{padding-top:0 !important}
 .block-container{padding-top:0 !important;margin-top:0 !important;padding-bottom:25px !important}
