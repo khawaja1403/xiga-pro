@@ -421,7 +421,7 @@ def get_candles_cached(provider, provider_symbol, resolution, _fresh_key="cached
     interval = "1m" if resolution == "1" else "5m"
     try:
         if provider == "BiQuote":
-            response = requests.get(f"{BIQUOTE_BASE}/{provider_symbol}/ohlc", params={"interval":interval,"limit":150}, timeout=15)
+            response = requests.get(f"{BIQUOTE_BASE}/{provider_symbol}/ohlc", params={"interval":interval,"limit":300}, timeout=15)
             if response.status_code != 200:
                 return [], f"BIQUOTE ERROR {response.status_code}"
             bars=response.json().get("bars",[])
@@ -434,11 +434,11 @@ def get_candles_cached(provider, provider_symbol, resolution, _fresh_key="cached
             return candles, "BIQUOTE MARKET DATA CONNECTED"
 
         if provider == "Binance":
-            r=requests.get(f"{BINANCE_BASE}/api/v3/klines",params={"symbol":provider_symbol,"interval":interval,"limit":150},timeout=15)
+            r=requests.get(f"{BINANCE_BASE}/api/v3/klines",params={"symbol":provider_symbol,"interval":interval,"limit":300},timeout=15)
         elif provider == "Bitget":
-            r=requests.get(f"{BITGET_BASE}/api/v3/market/candles",params={"category":"SPOT","symbol":provider_symbol,"interval":interval,"limit":150},timeout=15)
+            r=requests.get(f"{BITGET_BASE}/api/v3/market/candles",params={"category":"SPOT","symbol":provider_symbol,"interval":interval,"limit":300},timeout=15)
         elif provider == "OKX":
-            r=requests.get(f"{OKX_BASE}/api/v5/market/candles",params={"instId":provider_symbol,"bar":interval,"limit":150},timeout=15)
+            r=requests.get(f"{OKX_BASE}/api/v5/market/candles",params={"instId":provider_symbol,"bar":interval,"limit":300},timeout=15)
         else:
             return [], "UNKNOWN MARKET PROVIDER"
         if r.status_code != 200:
@@ -927,6 +927,14 @@ def analyze_market(provider, symbol, timeframe):
     support = min(float(c["low"]) for c in recent_window) if recent_window else None
     resistance = max(float(c["high"]) for c in recent_window) if recent_window else None
 
+    tp_profile = None
+    if signal in ("CALL", "PUT"):
+        tp_profile = historical_favorable_excursion(candles, resolution, signal)
+        if tp_profile and recent_window and current > 0:
+            recent_high = max(float(c["high"]) for c in recent_window)
+            recent_low = min(float(c["low"]) for c in recent_window)
+            tp_profile["recent_range_pct"] = max(0.0, (recent_high - recent_low) / current)
+
     return {
         "success": True,
         "signal": signal,
@@ -948,16 +956,74 @@ def analyze_market(provider, symbol, timeframe):
         "status": market_status,
         "news_status": news.get("status", "NO NEWS"),
         "reasons": reasons,
+        "tp_profile": tp_profile,
     }
 
-def calculate_trade_levels(signal, entry_price, atr_value, support=None, resistance=None, timeframe="1 MIN"):
+def historical_favorable_excursion(candles, resolution, signal, max_samples=120):
     """
-    Short-duration trade levels.
+    Estimate how far price historically moved in the signal direction during
+    one complete trade window. This is used only to size TAKE PROFIT and does
+    not change the CALL/PUT signal engine.
+    """
+    closed = completed_candles(candles, resolution)
+    if len(closed) < 80:
+        return None
 
-    The previous version allowed 20-candle support/resistance gaps to determine
-    the risk distance. That can place TP/SL far away from the live entry,
-    especially on fast 1-minute signals. For the XIGA trade window, levels are
-    now driven primarily by current ATR and capped by the selected timeframe.
+    # Each candle represents the full configured trade window:
+    # 1 candle for 1 MIN and 1 candle for 5 MIN.
+    horizon = 1
+    usable_end = len(closed) - horizon
+    start_i = max(55, usable_end - max_samples)
+    excursions = []
+
+    for i in range(start_i, usable_end):
+        entry = float(closed[i]["close"])
+        if entry <= 0:
+            continue
+        future = closed[i + 1:i + 1 + horizon]
+        if not future:
+            continue
+
+        if signal == "CALL":
+            favorable = max(float(c["high"]) for c in future) - entry
+        elif signal == "PUT":
+            favorable = entry - min(float(c["low"]) for c in future)
+        else:
+            return None
+
+        favorable_pct = favorable / entry
+        if favorable_pct > 0:
+            excursions.append(favorable_pct)
+
+    if len(excursions) < 12:
+        return None
+
+    excursions.sort()
+
+    def percentile(values, p):
+        position = (len(values) - 1) * p
+        low = int(position)
+        high = min(low + 1, len(values) - 1)
+        fraction = position - low
+        return values[low] * (1 - fraction) + values[high] * fraction
+
+    return {
+        "samples": len(excursions),
+        "p35": percentile(excursions, 0.35),
+        "p40": percentile(excursions, 0.40),
+        "p50": percentile(excursions, 0.50),
+        "p60": percentile(excursions, 0.60),
+        "max": max(excursions),
+    }
+
+
+def calculate_trade_levels(signal, entry_price, atr_value, support=None, resistance=None, timeframe="1 MIN", tp_profile=None):
+    """
+    Adaptive short-duration trade levels.
+
+    TAKE PROFIT is derived from current ATR and the observed favorable move in
+    the last 300 completed candles for the same trade direction/window.
+    STOP LOSS remains display-only for the result logic.
     """
     entry = float(entry_price)
     atr_value = float(atr_value or 0)
@@ -965,21 +1031,50 @@ def calculate_trade_levels(signal, entry_price, atr_value, support=None, resista
         return None, None, None
 
     if timeframe == "5 MIN":
-        atr_multiplier = 0.90
-        min_risk_pct = 0.00015   # 0.015%
-        max_risk_pct = 0.00150   # 0.15%
+        atr_multiplier = 0.75
+        min_tp_pct = 0.00010   # 0.010% minimum target
+        min_risk_pct = 0.00012
+        max_risk_pct = 0.00150
+        resolution = "5"
     else:
-        atr_multiplier = 0.65
-        min_risk_pct = 0.00008   # 0.008%
-        max_risk_pct = 0.00060   # 0.06%
+        atr_multiplier = 0.55
+        min_tp_pct = 0.00006   # 0.006% minimum target
+        min_risk_pct = 0.00006
+        max_risk_pct = 0.00060
+        resolution = "1"
 
-    # Keep levels close enough for the actual short trade window.
-    risk = max(atr_value * atr_multiplier, entry * min_risk_pct)
+    atr_pct = (atr_value / entry) if entry else 0.0
+    atr_target_pct = atr_pct * atr_multiplier
+
+    # Recent 20-candle range acts as a market-specific ceiling rather than a
+    # fixed universal percentage.
+    recent_range_pct = 0.0
+    if tp_profile and tp_profile.get("recent_range_pct") is not None:
+        recent_range_pct = max(0.0, float(tp_profile["recent_range_pct"]))
+
+    # Historical favorable excursion is the main adaptive component.
+    if tp_profile and tp_profile.get("p40") is not None:
+        historical_target_pct = float(tp_profile["p40"]) * 0.90
+        target_pct = 0.55 * atr_target_pct + 0.45 * historical_target_pct
+    else:
+        target_pct = atr_target_pct
+
+    # Keep TP reachable for the selected short window. The ceiling adapts to
+    # both current ATR and the recent 20-candle trading range.
+    dynamic_ceiling = max(
+        min_tp_pct,
+        min(
+            max(atr_target_pct * 1.80, min_tp_pct),
+            recent_range_pct * 0.35 if recent_range_pct > 0 else max(atr_target_pct * 1.80, min_tp_pct),
+        ),
+    )
+    target_pct = min(max(target_pct, min_tp_pct), dynamic_ceiling)
+
+    reward = entry * target_pct
+
+    # SL is kept close to current volatility and is NOT used to determine WIN/LOSS.
+    risk = max(atr_value * (0.60 if timeframe == "1 MIN" else 0.80), entry * min_risk_pct)
     risk = min(risk, entry * max_risk_pct)
-
-    # Fixed short-term risk/reward target. Do not expand it using distant
-    # support/resistance because those levels may be many candles away.
-    reward = risk * 1.25
 
     if signal == "CALL":
         stop = entry - risk
@@ -1030,90 +1125,29 @@ def seconds_until(iso_value):
 
 def resolve_trade_if_ready():
     pending = st.session_state.get("trade_pending")
-    if not pending:
-        return
-
-    # Check the live price during every 1-second fragment refresh.
-    # TAKE PROFIT is the actual success condition. STOP LOSS is display-only.
-    if not pending.get("tp_hit_at"):
-        tick, _status = get_latest_tick(
-            pending["provider"],
-            pending["symbol"],
-            fresh=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        )
-        if tick:
-            live_price = float(tick["price"])
-            target = float(pending["take_profit"])
-            signal = pending["signal"]
-            tp_hit = live_price >= target if signal == "CALL" else live_price <= target
-
-            if tp_hit:
-                started = parse_candle_time(pending.get("started_at"))
-                if started is None:
-                    started = datetime.now(timezone.utc)
-                if started.tzinfo is None:
-                    started = started.replace(tzinfo=timezone.utc)
-
-                hit_time = datetime.now(timezone.utc)
-                hit_seconds = max(0, int((hit_time - started).total_seconds()))
-                max_seconds = 60 if pending.get("timeframe") == "1 MIN" else 300
-                hit_seconds = min(hit_seconds, max_seconds)
-
-                pending["tp_hit_at"] = hit_time.isoformat()
-                pending["tp_hit_second"] = hit_seconds
-                pending["tp_hit_price"] = live_price
-                pending["state"] = "TP HIT"
-
-                for item in st.session_state.history:
-                    if item.get("id") == pending.get("id"):
-                        item["tp_hit_second"] = hit_seconds
-                        item["tp_hit_price"] = live_price
-                        break
-
-    # Keep the trade window running until expiry.
-    # At expiry: TP hit at any point = WIN; otherwise = LOSS.
-    if seconds_until(pending.get("complete_at")) > 0:
-        return
-
-    result_price = pending.get("tp_hit_price")
-    if result_price is None:
-        tick, _status = get_latest_tick(
-            pending["provider"],
-            pending["symbol"],
-            fresh=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        )
-        result_price = float(tick["price"]) if tick else float(pending["entry_price"])
-
-    outcome = "WIN" if pending.get("tp_hit_at") else "LOSS"
+    if not pending or seconds_until(pending.get("complete_at")) > 0: return
+    # At expiry, bypass the normal short cache so the result uses the latest
+    # available market price/candle rather than an older cached value.
+    tick, status = get_latest_tick(pending["provider"], pending["symbol"], fresh=datetime.now(timezone.utc).replace(microsecond=0).isoformat())
+    if tick:
+        result_price = float(tick["price"])
+    else:
+        candles, candle_status = get_candles(pending["provider"], pending["symbol"], TIMEFRAMES[pending["timeframe"]])
+        if not candles:
+            pending["state"] = "RESULT ERROR"; pending["error"] = f"{status}; {candle_status}"; return
+        closed = completed_candles(candles, TIMEFRAMES[pending["timeframe"]])
+        if not closed:
+            pending["state"] = "RESULT ERROR"; pending["error"] = f"{status}; NO CLOSED RESULT CANDLE"; return
+        result_price = float(closed[-1]["close"])
+    outcome = calculate_outcome(pending["signal"], pending["entry_price"], result_price)
     checked = datetime.now(ZoneInfo("Asia/Karachi")).strftime("%Y-%m-%d %H:%M:%S PKT")
-
     for item in st.session_state.history:
         if item.get("id") == pending.get("id"):
-            item["status"] = outcome
-            item["result_price"] = result_price
-            item["checked_at"] = checked
-            break
-
+            item["status"] = outcome; item["result_price"] = result_price; item["checked_at"] = checked; break
     st.session_state.result["status"] = outcome
     st.session_state.result["result_price"] = result_price
     st.session_state.result["checked_at"] = checked
-
-    if outcome == "WIN":
-        hit_second = int(pending.get("tp_hit_second", 0))
-        st.session_state.result["description"] = (
-            f"TAKE PROFIT HIT at {hit_second}s. "
-            f"TP {pending['take_profit']:.8g} reached at {pending.get('tp_hit_price', result_price):.8g}."
-        )
-        st.session_state.result["tp_hit_second"] = hit_second
-        st.session_state.result["tp_hit_price"] = pending.get("tp_hit_price", result_price)
-    else:
-        st.session_state.result["description"] = (
-            f"TAKE PROFIT was not reached during the "
-            f"{1 if pending.get('timeframe') == '1 MIN' else 5}-minute trade window."
-        )
-        st.session_state.result["tp_hit_second"] = None
-        st.session_state.result["tp_hit_price"] = None
-
+    st.session_state.result["description"] = f"Individual signal result: {outcome}. Entry {pending['entry_price']:.6g} → result {result_price:.6g}."
     st.session_state.trade_pending = None
     update_win_loss_totals()
 
@@ -1229,13 +1263,9 @@ if selected_page == "Trade":
             win_display = f'{int(result.get("probability", 50))}%'
             win_status = f'● TRADE TIME {format_countdown(remaining)}'
             ai_title = "SIGNAL READY • TRADE WINDOW"
-        elif result.get("status") in ("WIN", "LOSS"):
+        elif result.get("status") in ("WIN", "LOSS", "DRAW"):
             win_display = result.get("status")
-            hit_second = result.get("tp_hit_second")
-            if result.get("status") == "WIN" and hit_second is not None:
-                win_status = f"● TAKE PROFIT HIT AT {int(hit_second)}s"
-            else:
-                win_status = "● TAKE PROFIT NOT REACHED"
+            win_status = "● INDIVIDUAL SIGNAL RESULT"
             ai_title = "TRADE WINDOW COMPLETE"
         elif result.get("success") and result.get("signal") in ("CALL", "PUT"):
             win_display = f'{int(result.get("probability", 50))}%'
@@ -1319,7 +1349,7 @@ if selected_page == "Trade":
             if analysis.get("success") and analysis.get("signal") in ("CALL", "PUT"):
                 entry_tick, entry_status = get_latest_tick(selected_provider, symbol)
                 entry_price = float(entry_tick["price"]) if entry_tick else float(analysis.get("price", 0))
-                entry_level, take_profit, stop_loss = calculate_trade_levels(analysis["signal"], entry_price, analysis.get("atr"), analysis.get("support"), analysis.get("resistance"), tf)
+                entry_level, take_profit, stop_loss = calculate_trade_levels(analysis["signal"], entry_price, analysis.get("atr"), analysis.get("support"), analysis.get("resistance"), tf, analysis.get("tp_profile"))
                 duration_minutes = 1 if tf == "1 MIN" else 5
                 start = datetime.now(ZoneInfo("Asia/Karachi"))
                 trade_id = analysis_pending["id"]
@@ -1337,7 +1367,7 @@ if selected_page == "Trade":
                     "probability": analysis.get("probability", 50), "price": entry_price,
                     "take_profit": take_profit, "stop_loss": stop_loss,
                     "timeframe": tf, "time": start.strftime("%Y-%m-%d %H:%M:%S PKT"), "provider": selected_provider,
-                    "status": "PENDING", "result_price": "—", "tp_hit_second": None, "tp_hit_price": None,
+                    "status": "PENDING", "result_price": "—",
                     "analysis_description": analysis.get("description", ""), "entry_status": entry_status,
                 })
             st.rerun()
