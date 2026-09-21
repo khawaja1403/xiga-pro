@@ -155,7 +155,7 @@ def xiga_subscription_login():
             st.error("Unable to connect to XIGA account service.")
             st.stop()
 
-
+    st.stop()
 xiga_subscription_login()
 # Market data providers. Public read-only market data is used; no trading API keys are needed.
 BIQUOTE_BASE = "https://biquote.io/api"
