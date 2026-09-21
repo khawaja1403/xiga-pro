@@ -367,6 +367,9 @@ OKX_BASE = "https://www.okx.com"
 CANDLE_CACHE_SECONDS = 10
 TICK_CACHE_SECONDS = 2
 NEWS_CACHE_SECONDS = 600
+BACKTEST_STANDARD_CANDLES = 5000
+BACKTEST_DEEP_CANDLES = 10000
+BACKTEST_CACHE_SECONDS = 900
 
 @st.cache_data(ttl=900, show_spinner=False)
 def get_symbol_catalog():
@@ -460,6 +463,112 @@ def get_candles(provider, symbol, resolution, fresh=False):
         # for multiple simultaneous users.
         return get_candles_cached(provider, symbol, resolution, _fresh_key=datetime.now(timezone.utc).replace(second=0, microsecond=0).isoformat())
     return get_candles_cached(provider, symbol, resolution, _fresh_key="cached")
+
+@st.cache_data(ttl=BACKTEST_CACHE_SECONDS, show_spinner=False)
+def get_backtest_candles(provider, provider_symbol, resolution, target_count):
+    """Fetch a larger completed-candle history for Learn > Backtest.
+    Live analysis remains on the existing 300-candle request path.
+    """
+    target_count = int(max(BACKTEST_STANDARD_CANDLES, min(BACKTEST_DEEP_CANDLES, target_count)))
+    interval = "1m" if resolution == "1" else "5m"
+    all_candles = []
+    try:
+        if provider == "BiQuote":
+            r = requests.get(
+                f"{BIQUOTE_BASE}/{provider_symbol}/ohlc",
+                params={"interval": interval, "limit": target_count},
+                timeout=30,
+            )
+            if r.status_code != 200:
+                return [], f"BIQUOTE BACKTEST ERROR {r.status_code}"
+            for bar in r.json().get("bars", []):
+                try:
+                    all_candles.append({
+                        "open": float(bar["open"]), "high": float(bar["high"]),
+                        "low": float(bar["low"]), "close": float(bar["close"]),
+                        "datetime": str(bar["openTime"]), "is_open": bool(bar.get("isOpen", False)),
+                    })
+                except (KeyError, TypeError, ValueError):
+                    pass
+
+        elif provider == "Binance":
+            end_time = int(datetime.now(timezone.utc).timestamp() * 1000)
+            while len(all_candles) < target_count:
+                need = min(1000, target_count - len(all_candles))
+                r = requests.get(
+                    f"{BINANCE_BASE}/api/v3/klines",
+                    params={"symbol": provider_symbol, "interval": interval, "limit": need, "endTime": end_time},
+                    timeout=20,
+                )
+                if r.status_code != 200:
+                    return [], f"BINANCE BACKTEST ERROR {r.status_code}"
+                rows = r.json()
+                if not rows:
+                    break
+                page = _parse_exchange_candles(provider, rows, resolution)
+                all_candles.extend(page)
+                oldest = int(rows[0][0])
+                if oldest <= 0 or len(rows) < need:
+                    break
+                end_time = oldest - 1
+
+        elif provider == "Bitget":
+            end_time = int(datetime.now(timezone.utc).timestamp() * 1000)
+            while len(all_candles) < target_count:
+                need = min(1000, target_count - len(all_candles))
+                r = requests.get(
+                    f"{BITGET_BASE}/api/v3/market/candles",
+                    params={"category": "SPOT", "symbol": provider_symbol, "interval": interval, "limit": need, "endTime": end_time},
+                    timeout=20,
+                )
+                if r.status_code != 200:
+                    return [], f"BITGET BACKTEST ERROR {r.status_code}"
+                raw = r.json()
+                rows = raw.get("data", [])
+                if not rows:
+                    break
+                all_candles.extend(_parse_exchange_candles(provider, raw, resolution))
+                oldest = int(rows[-1][0]) if rows else 0
+                if oldest <= 0 or len(rows) < need:
+                    break
+                end_time = oldest - 1
+
+        elif provider == "OKX":
+            after = None
+            while len(all_candles) < target_count:
+                need = min(300, target_count - len(all_candles))
+                params = {"instId": provider_symbol, "bar": interval, "limit": need}
+                if after is not None:
+                    params["after"] = str(after)
+                r = requests.get(f"{OKX_BASE}/api/v5/market/candles", params=params, timeout=20)
+                if r.status_code != 200:
+                    return [], f"OKX BACKTEST ERROR {r.status_code}"
+                raw = r.json()
+                rows = raw.get("data", [])
+                if not rows:
+                    break
+                all_candles.extend(_parse_exchange_candles(provider, raw, resolution))
+                oldest = int(rows[-1][0]) if rows else 0
+                if oldest <= 0 or len(rows) < need:
+                    break
+                after = oldest
+        else:
+            return [], "UNKNOWN BACKTEST PROVIDER"
+
+        # Deduplicate by candle timestamp and sort oldest -> newest.
+        unique = {}
+        for candle in all_candles:
+            unique[str(candle.get("datetime"))] = candle
+        candles = list(unique.values())
+        candles.sort(key=lambda x: parse_candle_time(x.get("datetime")) or datetime.min.replace(tzinfo=timezone.utc))
+        closed = completed_candles(candles, resolution)
+        return closed[-target_count:], f"{provider.upper()} BACKTEST DATA • {len(closed)} COMPLETED CANDLES"
+    except requests.exceptions.Timeout:
+        return [], f"{provider.upper()} BACKTEST TIMEOUT"
+    except requests.exceptions.RequestException:
+        return [], f"{provider.upper()} BACKTEST NETWORK ERROR"
+    except Exception as exc:
+        return [], f"{provider.upper()} BACKTEST DATA ERROR: {exc}"
 
 @st.cache_data(ttl=TICK_CACHE_SECONDS, show_spinner=False)
 def get_latest_tick(provider, provider_symbol, fresh=False):
@@ -1017,57 +1126,126 @@ def historical_favorable_excursion(candles, resolution, signal, max_samples=120)
     }
 
 
-@st.cache_data(ttl=60, show_spinner=False)
-def run_xiga_backtest(provider, symbol, timeframe):
+@st.cache_data(ttl=BACKTEST_CACHE_SECONDS, show_spinner=False)
+def run_xiga_backtest(provider, symbol, timeframe, target_count=BACKTEST_STANDARD_CANDLES):
     resolution = TIMEFRAMES.get(timeframe)
-    if not resolution: return {"success":False,"error":"Unsupported timeframe."}
-    candles, status = get_candles(provider, symbol, resolution, fresh=True)
-    closed = completed_candles(candles, resolution)
-    if len(closed) < 80: return {"success":False,"error":f"Not enough completed candles ({len(closed)})."}
-    wins=losses=draws=calls=puts=call_wins=put_wins=tp_hits=tp_misses=0; favorable=[]
-    for i in range(55, len(closed)-1):
-        window=closed[:i+1]; closes=[float(x["close"]) for x in window]; entry=closes[-1]
-        e9,e21,e50=ema(closes,9),ema(closes,21),ema(closes,50); rv=rsi(closes,14); mv,_=macd(closes); score=0; bullish=bearish=0
+    if not resolution:
+        return {"success": False, "error": "Unsupported timeframe."}
+
+    candles, status = get_backtest_candles(provider, symbol, resolution, target_count)
+    if len(candles) < target_count:
+        return {
+            "success": False,
+            "error": f"Only {len(candles)} completed candles were available. XIGA requires {target_count:,} for this backtest. Try another provider/market or use the provider with deeper history.",
+            "candles_available": len(candles),
+            "status": status,
+        }
+
+    wins = losses = draws = calls = puts = call_wins = put_wins = tp_hits = tp_misses = 0
+    favorable = []
+
+    for i in range(55, len(candles) - 1):
+        window = candles[:i + 1]
+        closes = [float(x["close"]) for x in window]
+        entry = closes[-1]
+        e9, e21, e50 = ema(closes, 9), ema(closes, 21), ema(closes, 50)
+        rv = rsi(closes, 14)
+        mv, _ = macd(closes)
+        atr_value = atr(window, 14)
+        score = 0
+        bullish = bearish = 0
+
         if e9 is not None and e21 is not None:
-            if e9>e21: score+=1; bullish+=1
-            elif e9<e21: score-=1; bearish+=1
+            if e9 > e21: score += 1; bullish += 1
+            elif e9 < e21: score -= 1; bearish += 1
         if e21 is not None and e50 is not None:
-            if e21>e50: score+=1; bullish+=1
-            elif e21<e50: score-=1; bearish+=1
+            if e21 > e50: score += 1; bullish += 1
+            elif e21 < e50: score -= 1; bearish += 1
         if e21 is not None:
-            if entry>e21: score+=1; bullish+=1
-            elif entry<e21: score-=1; bearish+=1
+            if entry > e21: score += 1; bullish += 1
+            elif entry < e21: score -= 1; bearish += 1
         if rv is not None:
-            if rv>=55: score+=1; bullish+=1
-            elif rv<=45: score-=1; bearish+=1
+            if rv >= 55: score += 1; bullish += 1
+            elif rv <= 45: score -= 1; bearish += 1
         if mv is not None:
-            if mv>0: score+=1; bullish+=1
-            elif mv<0: score-=1; bearish+=1
-        if len(closes)>=6:
-            if closes[-1]>closes[-6]: score+=1; bullish+=1
-            elif closes[-1]<closes[-6]: score-=1; bearish+=1
-        direction="CALL" if score>=3 else "PUT" if score<=-3 else None
-        if not direction or (direction=="CALL" and bearish>bullish) or (direction=="PUT" and bullish>bearish): continue
-        future=closed[i+1]; fc=float(future["close"]); calls+=direction=="CALL"; puts+=direction=="PUT"
-        if direction=="CALL":
-            good=fc>entry; fav=max(0.0,(float(future["high"])-entry)/entry)
-            if good: wins+=1; call_wins+=1
-            elif fc<entry: losses+=1
-            else: draws+=1
+            if mv > 0: score += 1; bullish += 1
+            elif mv < 0: score -= 1; bearish += 1
+        if len(closes) >= 6:
+            if closes[-1] > closes[-6]: score += 1; bullish += 1
+            elif closes[-1] < closes[-6]: score -= 1; bearish += 1
+
+        # Same candle-body confirmation and volatility guard used by live analysis.
+        last = window[-1]
+        candle_range = max(float(last["high"]) - float(last["low"]), 1e-12)
+        body_ratio = abs(float(last["close"]) - float(last["open"])) / candle_range
+        if body_ratio >= 0.55:
+            if float(last["close"]) > float(last["open"]): score += 1; bullish += 1
+            elif float(last["close"]) < float(last["open"]): score -= 1; bearish += 1
+
+        volatility_ok = True
+        if atr_value is not None and entry:
+            atr_pct = atr_value / entry
+            if atr_pct < 0.00002 or atr_pct > 0.03:
+                volatility_ok = False
+
+        direction = "CALL" if score >= 3 else "PUT" if score <= -3 else None
+        if not direction or not volatility_ok:
+            continue
+        if direction == "CALL" and bearish > bullish:
+            continue
+        if direction == "PUT" and bullish > bearish:
+            continue
+
+        future = candles[i + 1]
+        fc = float(future["close"])
+        calls += direction == "CALL"
+        puts += direction == "PUT"
+
+        if direction == "CALL":
+            good = fc > entry
+            fav = max(0.0, (float(future["high"]) - entry) / entry)
+            if good: wins += 1; call_wins += 1
+            elif fc < entry: losses += 1
+            else: draws += 1
         else:
-            good=fc<entry; fav=max(0.0,(entry-float(future["low"]))/entry)
-            if good: wins+=1; put_wins+=1
-            elif fc>entry: losses+=1
-            else: draws+=1
+            good = fc < entry
+            fav = max(0.0, (entry - float(future["low"])) / entry)
+            if good: wins += 1; put_wins += 1
+            elif fc > entry: losses += 1
+            else: draws += 1
+
         favorable.append(fav)
-        hist_atr=atr(window,14); profile=historical_favorable_excursion(window,resolution,direction,max_samples=60)
-        _,tp,_=calculate_trade_levels(direction,entry,hist_atr,timeframe=timeframe,tp_profile=profile)
+        recent = window[-20:]
+        profile = historical_favorable_excursion(window, resolution, direction, max_samples=120)
+        if profile and recent and entry > 0:
+            profile["recent_range_pct"] = max(0.0, (max(float(c["high"]) for c in recent) - min(float(c["low"]) for c in recent)) / entry)
+        _, tp, _ = calculate_trade_levels(direction, entry, atr_value, timeframe=timeframe, tp_profile=profile)
         if tp is not None:
-            hit=float(future["high"])>=tp if direction=="CALL" else float(future["low"])<=tp
-            if hit: tp_hits+=1
-            else: tp_misses+=1
-    decided=wins+losses; total_tp=tp_hits+tp_misses; calls_n=calls or 1; puts_n=puts or 1
-    return {"success":True,"symbol":symbol,"timeframe":timeframe,"candles":len(closed),"signals":calls+puts,"calls":calls,"puts":puts,"wins":wins,"losses":losses,"draws":draws,"accuracy":wins/decided*100 if decided else 0,"call_accuracy":call_wins/calls_n*100 if calls else 0,"put_accuracy":put_wins/puts_n*100 if puts else 0,"tp_hits":tp_hits,"tp_misses":tp_misses,"tp_rate":tp_hits/total_tp*100 if total_tp else 0,"avg_favorable":sum(favorable)/len(favorable)*100 if favorable else 0,"status":status}
+            hit = float(future["high"]) >= tp if direction == "CALL" else float(future["low"]) <= tp
+            if hit: tp_hits += 1
+            else: tp_misses += 1
+
+    decided = wins + losses
+    total_tp = tp_hits + tp_misses
+    accuracy = wins / decided * 100 if decided else 0.0
+    tp_rate = tp_hits / total_tp * 100 if total_tp else 0.0
+    signals = calls + puts
+
+    # Historical status is a transparent validation check, not a prediction.
+    # These thresholds are intentionally simple and fixed so users know why a status appears.
+    status_ok = signals >= 100 and accuracy >= 55.0 and tp_rate >= 50.0
+    return {
+        "success": True, "symbol": symbol, "timeframe": timeframe,
+        "candles": len(candles), "signals": signals, "calls": calls, "puts": puts,
+        "wins": wins, "losses": losses, "draws": draws,
+        "accuracy": accuracy,
+        "call_accuracy": call_wins / calls * 100 if calls else 0,
+        "put_accuracy": put_wins / puts * 100 if puts else 0,
+        "tp_hits": tp_hits, "tp_misses": tp_misses, "tp_rate": tp_rate,
+        "avg_favorable": sum(favorable) / len(favorable) * 100 if favorable else 0,
+        "status": status, "validation_ok": status_ok,
+        "validation_reason": "Meets XIGA's historical validation thresholds." if status_ok else "Does not meet XIGA's historical validation thresholds.",
+    }
 
 def calculate_trade_levels(signal, entry_price, atr_value, support=None, resistance=None, timeframe="1 MIN", tp_profile=None):
     """
@@ -1509,32 +1687,8 @@ if selected_page == "Trade":
 elif selected_page == "History":
     st.markdown('<div class="xiga-card">', unsafe_allow_html=True)
     st.markdown("### 📊 XIGA Trade History")
-    st.markdown("#### 🧪 AI BACKTEST / PERFORMANCE")
-    st.caption("Tests the existing XIGA directional logic against historical candles. It does not change the live analysis engine.")
-    b1,b2=st.columns(2)
-    with b1: bt_provider=st.selectbox("Backtest Platform",EXCHANGE_PROVIDERS,key="bt_provider")
-    if bt_provider=="BiQuote":
-        cats=list(ASSETS.keys()); bt_cat=st.selectbox("Backtest Asset Type",cats,key="bt_category"); bt_map=ASSETS.get(bt_cat) or {}
-    else:
-        st.selectbox("Backtest Asset Type",["Crypto / USDT"],disabled=True,key=f"bt_type_{bt_provider}"); bt_map=EXCHANGE_ASSETS[bt_provider]
-    bt_assets=list(bt_map.keys())
-    if bt_assets:
-        bt_asset=st.selectbox("Backtest Market",bt_assets,key="bt_asset"); bt_tf=st.selectbox("Backtest Timeframe",list(TIMEFRAMES.keys()),key="bt_timeframe")
-        if st.button("🧪 RUN BACKTEST",key="run_backtest",use_container_width=True):
-            with st.spinner("Testing historical candles..."): st.session_state.backtest_result=run_xiga_backtest(bt_provider,bt_map[bt_asset],bt_tf)
-        bt=st.session_state.get("backtest_result")
-        if bt:
-            if not bt.get("success"): st.error(bt.get("error","Backtest failed."))
-            else:
-                st.markdown(f"**{bt['symbol']} • {bt['timeframe']} • {bt['candles']} completed candles**")
-                st.markdown(f"**Signals:** {bt['signals']}  •  **CALL:** {bt['calls']}  •  **PUT:** {bt['puts']}  •  **Directional accuracy:** {bt['accuracy']:.1f}%")
-                st.markdown(f"**CALL accuracy:** {bt['call_accuracy']:.1f}%  •  **PUT accuracy:** {bt['put_accuracy']:.1f}%")
-                st.markdown(f"**TP reached:** {bt['tp_hits']}  •  **TP not reached:** {bt['tp_misses']}  •  **TP-hit rate:** {bt['tp_rate']:.1f}%")
-                st.markdown(f"**Average favorable movement:** {bt['avg_favorable']:.3f}%")
-                st.caption("Historical results are diagnostic only and do not guarantee future performance.")
-    st.markdown("---")
-    st.markdown("#### 📜 LIVE TRADE HISTORY")
-    if not st.session_state.history: st.info("No signals have been generated yet.")
+    if not st.session_state.history:
+        st.info("No live trades have been generated yet.")
     else:
         for item in st.session_state.history[:30]:
             st.markdown(f"**{item['asset']}**\n\nPlatform: **{item.get('provider','BiQuote')}**\n\nSignal: **{item['signal']}**\n\nStrength: **{item['strength']}/5**\n\nEntry Price: `{item['price']}`\n\nResult Price: `{item.get('result_price','—')}`\n\nTimeframe: `{item['timeframe']}`\n\nSignal Time: `{item['time']}`\n\nResult Candle: `{item.get('result_candle_time','—')}`\n\nProbability: **{item.get('probability','—')}%**\n\nStatus: **{item.get('status','PENDING')}**\n\nTP Hit Time: **{item.get('tp_hit_elapsed','—') if item.get('status')=='WIN' else '—'}**\n\n---")
@@ -1542,38 +1696,73 @@ elif selected_page == "History":
 
 elif selected_page == "Learn":
     st.markdown('<div class="xiga-card">', unsafe_allow_html=True)
-    st.markdown(
-        """
-### 📈 EMA
+    st.markdown("# 🧪 BACKTEST — HOW XIGA WORKS")
+    st.caption("Run a historical test first, review the results, then decide whether to continue to live analysis. Historical performance does not guarantee the next live result.")
 
-Moving averages help identify the direction of a market trend.
+    bt_mode = st.radio("Backtest depth", ["STANDARD • 5,000 CANDLES", "DEEP • 10,000 CANDLES"], horizontal=True, key="learn_bt_mode")
+    target_count = BACKTEST_DEEP_CANDLES if bt_mode.startswith("DEEP") else BACKTEST_STANDARD_CANDLES
 
-### 📊 RSI
+    b1, b2 = st.columns(2)
+    with b1:
+        bt_provider = st.selectbox("Backtest Platform", EXCHANGE_PROVIDERS, key="learn_bt_provider")
+    if bt_provider == "BiQuote":
+        cats = list(ASSETS.keys())
+        bt_cat = st.selectbox("Backtest Asset Type", cats, key="learn_bt_category")
+        bt_map = ASSETS.get(bt_cat) or {}
+    else:
+        st.selectbox("Backtest Asset Type", ["Crypto / USDT"], disabled=True, key=f"learn_bt_type_{bt_provider}")
+        bt_map = EXCHANGE_ASSETS[bt_provider]
 
-RSI measures recent price momentum.
+    bt_assets = list(bt_map.keys())
+    if bt_assets:
+        bt_asset = st.selectbox("Backtest Market", bt_assets, key="learn_bt_asset")
+        bt_tf = st.selectbox("Backtest Timeframe", list(TIMEFRAMES.keys()), key="learn_bt_timeframe")
 
-### 📉 MACD
+        if st.button("🧪 RUN BACKTEST", key="learn_run_backtest", use_container_width=True):
+            with st.spinner(f"Testing {target_count:,} historical candles..."):
+                st.session_state.backtest_result = run_xiga_backtest(bt_provider, bt_map[bt_asset], bt_tf, target_count)
 
-MACD compares moving averages to help identify momentum.
+        bt = st.session_state.get("backtest_result")
+        if bt:
+            if not bt.get("success"):
+                st.error(bt.get("error", "Backtest failed."))
+                if bt.get("status"):
+                    st.caption(bt["status"])
+            else:
+                st.markdown(f"**{bt['symbol']} • {bt['timeframe']} • {bt['candles']:,} completed candles**")
+                st.markdown(f"**Historical Signals:** {bt['signals']:,}  •  **CALL:** {bt['calls']:,}  •  **PUT:** {bt['puts']:,}")
+                st.markdown(f"**Directional Accuracy:** {bt['accuracy']:.1f}%  •  **CALL Accuracy:** {bt['call_accuracy']:.1f}%  •  **PUT Accuracy:** {bt['put_accuracy']:.1f}%")
+                st.markdown(f"**TP Reached:** {bt['tp_hits']:,}  •  **TP Not Reached:** {bt['tp_misses']:,}  •  **TP-Hit Rate:** {bt['tp_rate']:.1f}%")
+                st.markdown(f"**Average Favorable Movement:** {bt['avg_favorable']:.3f}%")
 
-### 🟢 CALL
+                if bt.get("validation_ok"):
+                    st.success("🟢 BACKTEST CONDITIONS ACCEPTABLE")
+                else:
+                    st.warning("🟠 BACKTEST CONDITIONS WEAK")
+                st.caption(bt.get("validation_reason", "Historical validation only."))
+                st.caption("XIGA validation check: at least 100 historical signals, ≥55% directional accuracy, and ≥50% TP-hit rate. These are historical thresholds, not guarantees of future performance.")
 
-A CALL means the configured indicators currently show stronger bullish conditions.
+                if bt.get("validation_ok"):
+                    if st.button("⚡ GO TO LIVE ANALYSIS", key="go_live_analysis", use_container_width=True):
+                        st.session_state.page = "Trade"
+                        st.session_state.navigation = "Trade"
+                        st.rerun()
 
-### 🔴 PUT
-
-A PUT means the configured indicators currently show stronger bearish conditions.
-
-### ⚪ NO TRADE
-
-When the indicators are mixed, XIGA does not force a directional signal.
-
-### ⚠️ Important
-
-Signals are analysis only.
-Markets can move unexpectedly and no signal guarantees a winning trade.
-"""
-    )
+    st.markdown("---")
+    st.markdown("### 📈 EMA")
+    st.write("Moving averages help identify the direction of a market trend.")
+    st.markdown("### 📊 RSI")
+    st.write("RSI measures recent price momentum.")
+    st.markdown("### 📉 MACD")
+    st.write("MACD compares moving averages to help identify momentum.")
+    st.markdown("### 🟢 CALL")
+    st.write("A CALL means the configured indicators currently show stronger bullish conditions.")
+    st.markdown("### 🔴 PUT")
+    st.write("A PUT means the configured indicators currently show stronger bearish conditions.")
+    st.markdown("### ⚪ NO TRADE")
+    st.write("When the indicators are mixed, XIGA does not force a directional signal.")
+    st.markdown("### ⚠️ Important")
+    st.write("Signals are analysis only. Markets can move unexpectedly and no signal guarantees a winning trade.")
     st.markdown("</div>", unsafe_allow_html=True)
 
 elif selected_page == "Profile":
