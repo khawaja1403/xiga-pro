@@ -1,6 +1,11 @@
 
 import streamlit as st
 import requests
+import streamlit.components.v1 as components
+import extra_streamlit_components as stx
+import base64
+import hashlib
+from cryptography.fernet import Fernet, InvalidToken
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -10,6 +15,45 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="collapsed"
 )
+
+# Browser-persistent encrypted session cookie.
+COOKIE_PASSWORD = str(st.secrets.get("COOKIES_PASSWORD", "")).strip()
+if not COOKIE_PASSWORD:
+    st.error("XIGA PRO is missing the COOKIES_PASSWORD secret. Please add it in Streamlit Secrets.")
+    st.stop()
+
+_COOKIE_FERNET_KEY = base64.urlsafe_b64encode(hashlib.sha256(COOKIE_PASSWORD.encode()).digest())
+COOKIE_FERNET = Fernet(_COOKIE_FERNET_KEY)
+COOKIE_MANAGER = stx.CookieManager(key="xiga-pro-auth")
+COOKIE_NAME = "xiga_refresh"
+COOKIE_DAYS = 365
+
+def set_persistent_refresh_cookie(refresh_token):
+    if not refresh_token:
+        return
+    encrypted = COOKIE_FERNET.encrypt(refresh_token.encode()).decode()
+    COOKIE_MANAGER.set(
+        COOKIE_NAME,
+        encrypted,
+        expires_at=datetime.now() + timedelta(days=COOKIE_DAYS),
+        secure=True,
+        same_site="lax",
+    )
+
+def get_persistent_refresh_cookie():
+    value = COOKIE_MANAGER.get(COOKIE_NAME)
+    if not value:
+        return ""
+    try:
+        return COOKIE_FERNET.decrypt(value.encode()).decode()
+    except (InvalidToken, ValueError, TypeError):
+        return ""
+
+def delete_persistent_refresh_cookie():
+    try:
+        COOKIE_MANAGER.delete(COOKIE_NAME)
+    except Exception:
+        pass
 
 def init_state():
     defaults = {
@@ -78,85 +122,324 @@ def get_secret(name):
 SUPABASE_URL = get_secret("SUPABASE_URL")
 SUPABASE_PUBLISHABLE_KEY = get_secret("SUPABASE_PUBLISHABLE_KEY")
 XIGA_FUNCTION_URL = f"{SUPABASE_URL}/functions/v1/xiga-request-activation-key"
+XIGA_PRO_URL = "https://xiga-pro.streamlit.app"
 
+def auth_headers(access_token=None):
+    headers = {"apikey": SUPABASE_PUBLISHABLE_KEY, "Content-Type": "application/json"}
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
+    return headers
+
+def save_session(data):
+    st.session_state["xiga_access_token"] = data.get("access_token", "")
+    st.session_state["xiga_refresh_token"] = data.get("refresh_token", "")
+    st.session_state["xiga_email"] = data.get("user", {}).get("email") or st.session_state.get("xiga_email", "")
+    refresh_token = data.get("refresh_token")
+    if refresh_token:
+        set_persistent_refresh_cookie(refresh_token)
+
+def clear_session():
+    for key in ("xiga_access_token", "xiga_refresh_token", "xiga_email", "xiga_status", "xiga_subscription_active"):
+        st.session_state.pop(key, None)
+    delete_persistent_refresh_cookie()
+
+def refresh_access_token(refresh_token):
+    try:
+        response = requests.post(
+            f"{SUPABASE_URL}/auth/v1/token?grant_type=refresh_token",
+            headers=auth_headers(),
+            json={"refresh_token": refresh_token},
+            timeout=15,
+        )
+        if response.status_code == 200:
+            save_session(response.json())
+            return True
+    except requests.RequestException:
+        pass
+    return False
+
+def ensure_session_from_cookie():
+    if st.session_state.get("xiga_access_token"):
+        return True
+    refresh_token = get_persistent_refresh_cookie()
+    return bool(refresh_token and refresh_access_token(refresh_token))
+
+def get_subscription_status():
+    token = st.session_state.get("xiga_access_token")
+    if not token:
+        return None
+    try:
+        response = requests.post(
+            XIGA_FUNCTION_URL,
+            headers=auth_headers(token),
+            json={"action": "status"},
+            timeout=15,
+        )
+        if response.status_code == 200:
+            data = response.json()
+            st.session_state["xiga_status"] = data
+            return data
+        if response.status_code in (401, 403):
+            refresh_token = st.session_state.get("xiga_refresh_token") or get_persistent_refresh_cookie()
+            if refresh_token and refresh_access_token(refresh_token):
+                return get_subscription_status()
+    except requests.RequestException:
+        return None
+    return None
+
+def call_xiga_function(action, key=None):
+    token = st.session_state.get("xiga_access_token")
+    payload = {"action": action}
+    if key is not None:
+        payload["key"] = key
+    try:
+        response = requests.post(
+            XIGA_FUNCTION_URL,
+            headers=auth_headers(token),
+            json=payload,
+            timeout=15,
+        )
+        try:
+            data = response.json()
+        except ValueError:
+            data = {}
+        return response.status_code, data
+    except requests.RequestException:
+        return 0, {"error": "Unable to connect to XIGA subscription service."}
+
+def render_password_recovery_helper():
+    # Convert the Supabase recovery URL hash into temporary query parameters so
+    # Streamlit Python can display the reset form. The recovery values are removed
+    # from the URL immediately after the password is changed.
+    components.html(
+        """
+<script>
+(function() {
+  const hash = window.parent.location.hash || window.location.hash || "";
+  if (!hash.includes("type=recovery") || !hash.includes("access_token=")) return;
+  const params = new URLSearchParams(hash.replace(/^#/, ""));
+  const accessToken = params.get("access_token");
+  const refreshToken = params.get("refresh_token") || "";
+  if (!accessToken) return;
+  const target = new URL(window.parent.location.href);
+  target.hash = "";
+  target.searchParams.set("xiga_recovery", "1");
+  target.searchParams.set("xiga_access", accessToken);
+  target.searchParams.set("xiga_refresh", refreshToken);
+  window.parent.location.replace(target.toString());
+})();
+</script>
+""",
+        height=1,
+    )
+
+
+def handle_password_recovery():
+    params = st.query_params
+    if params.get("xiga_recovery") == "1" and not st.session_state.get("xiga_recovery_token"):
+        st.session_state["xiga_recovery_token"] = params.get("xiga_access", "")
+        st.session_state["xiga_recovery_refresh"] = params.get("xiga_refresh", "")
+        for key in ("xiga_recovery", "xiga_access", "xiga_refresh"):
+            params.pop(key, None)
+        st.rerun()
+
+    access_token = st.session_state.get("xiga_recovery_token", "")
+    refresh_token = st.session_state.get("xiga_recovery_refresh", "")
+    if not access_token:
+        return False
+
+    st.markdown("## RESET PASSWORD")
+    st.caption("Create a new password for your XIGA account.")
+    with st.form("xiga_password_reset"):
+        new_password = st.text_input("New password", type="password")
+        confirm_password = st.text_input("Confirm new password", type="password")
+        reset = st.form_submit_button("SAVE NEW PASSWORD")
+
+    if reset:
+        if len(new_password) < 6:
+            st.error("Password must be at least 6 characters.")
+            st.stop()
+        if new_password != confirm_password:
+            st.error("Passwords do not match.")
+            st.stop()
+        try:
+            session_response = requests.post(
+                f"{SUPABASE_URL}/auth/v1/token?grant_type=refresh_token",
+                headers=auth_headers(),
+                json={"refresh_token": refresh_token},
+                timeout=15,
+            ) if refresh_token else None
+            token = access_token
+            if session_response is not None and session_response.status_code == 200:
+                token = session_response.json().get("access_token", access_token)
+            response = requests.put(
+                f"{SUPABASE_URL}/auth/v1/user",
+                headers=auth_headers(token),
+                json={"password": new_password},
+                timeout=15,
+            )
+            if response.status_code == 200:
+                st.session_state.pop("xiga_recovery_token", None)
+                st.session_state.pop("xiga_recovery_refresh", None)
+                st.success("Password updated successfully. Please log in with your new password.")
+                st.session_state["access_mode"] = "LOGIN"
+                st.rerun()
+            else:
+                try:
+                    message = response.json().get("msg") or response.json().get("message")
+                except ValueError:
+                    message = None
+                st.error(message or "Unable to update the password. The reset link may have expired.")
+        except requests.RequestException:
+            st.error("Unable to connect to the XIGA account service.")
+    return True
 
 def xiga_subscription_login():
-    if st.session_state.get("xiga_access_token"):
-        token = st.session_state["xiga_access_token"]
+    render_password_recovery_helper()
+    if not SUPABASE_URL or not SUPABASE_PUBLISHABLE_KEY:
+        st.error("XIGA PRO subscription settings are missing.")
+        st.stop()
 
-        try:
-            response = requests.post(
-                XIGA_FUNCTION_URL,
-                headers={
-                    "apikey": SUPABASE_PUBLISHABLE_KEY,
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
-                json={"action": "status"},
-                timeout=15,
-            )
+    if ensure_session_from_cookie():
+        status = get_subscription_status()
+        if status is None:
+            st.error("Unable to verify your XIGA PRO subscription right now.")
+            st.stop()
+        st.session_state["xiga_email"] = st.session_state.get("xiga_email") or status.get("email", "")
+        if status.get("active"):
+            st.session_state["xiga_subscription_active"] = True
+            return True
 
-            if response.status_code == 200:
-                data = response.json()
-
-                if data.get("active"):
-                    return True
-
-                st.error("Your XIGA PRO subscription is not active.")
-                st.info("Please activate or renew your subscription.")
-                if st.button("LOG OUT"):
-                    st.session_state.pop("xiga_access_token", None)
-                    st.rerun()
+        st.session_state["xiga_subscription_active"] = False
+        st.markdown("## XIGA PRO SUBSCRIPTION")
+        st.warning("Your XIGA PRO subscription is not active.")
+        expires = status.get("subscription_expires_at")
+        if expires:
+            st.info(f"Previous subscription expiry: {expires}")
+        request_key = st.button("GENERATE KEY", key="generate_activation_key", use_container_width=True)
+        if request_key:
+            code, data = call_xiga_function("request")
+            if code == 200:
+                st.success("Key request sent. Please contact the XIGA owner for your key.")
+            else:
+                st.error(data.get("error", "Unable to request a key."))
+        with st.form("xiga_activate_key"):
+            activation_key = st.text_input("ACTIVATION KEY", placeholder="Enter the key provided to your account")
+            activate = st.form_submit_button("ACTIVATE KEY")
+        if activate:
+            if not activation_key.strip():
+                st.error("Please enter your activation key.")
                 st.stop()
-
-            st.error("Unable to verify your XIGA PRO subscription.")
-            st.stop()
-
-        except Exception:
-            st.error("Unable to connect to XIGA PRO subscription service.")
-            st.stop()
+            code, data = call_xiga_function("activate", activation_key.strip())
+            if code == 200:
+                st.success("Subscription activated for 1 year. Opening XIGA PRO...")
+                st.rerun()
+            else:
+                st.error(data.get("error", "Activation failed."))
+        if st.button("LOG OUT", key="expired_logout", use_container_width=True):
+            clear_session()
+            st.rerun()
+        st.stop()
 
     st.markdown("## XIGA PRO SECURE ACCESS")
-    st.caption("Sign in with your XIGA PRO account to continue.")
+    st.caption("Use your XIGA account to access the XIGA PRO trading app.")
+    mode = st.radio("Access", ["LOGIN", "SIGN UP", "FORGOT PASSWORD"], horizontal=True, label_visibility="collapsed", key="access_mode")
 
-    with st.form("xiga_pro_login"):
-        email = st.text_input("Email")
-        password = st.text_input("Password", type="password")
-        login = st.form_submit_button("LOGIN")
-
-    if login:
-        if not email or not password:
-            st.error("Please enter your email and password.")
-            st.stop()
-
-        try:
-            response = requests.post(
-                f"{SUPABASE_URL}/auth/v1/token?grant_type=password",
-                headers={
-                    "apikey": SUPABASE_PUBLISHABLE_KEY,
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "email": email.strip(),
-                    "password": password,
-                },
-                timeout=15,
-            )
-
-            if response.status_code != 200:
-                st.error("Invalid email or password.")
+    if mode == "LOGIN":
+        with st.form("xiga_pro_login"):
+            email = st.text_input("Email")
+            password = st.text_input("Password", type="password")
+            login = st.form_submit_button("LOGIN")
+        if login:
+            if not email or not password:
+                st.error("Please enter your email and password.")
+                st.stop()
+            try:
+                response = requests.post(
+                    f"{SUPABASE_URL}/auth/v1/token?grant_type=password",
+                    headers=auth_headers(),
+                    json={"email": email.strip(), "password": password},
+                    timeout=15,
+                )
+                if response.status_code != 200:
+                    st.error("Invalid email or password. If you just signed up, confirm your email first.")
+                    st.stop()
+                save_session(response.json())
+                st.rerun()
+            except requests.RequestException:
+                st.error("Unable to connect to XIGA account service.")
                 st.stop()
 
-            data = response.json()
-            st.session_state["xiga_access_token"] = data["access_token"]
-            st.rerun()
+    elif mode == "SIGN UP":
+        with st.form("xiga_pro_signup"):
+            full_name = st.text_input("Full name")
+            email = st.text_input("Email")
+            password = st.text_input("Password", type="password")
+            confirm = st.text_input("Confirm password", type="password")
+            signup = st.form_submit_button("CREATE ACCOUNT")
+        if signup:
+            if not email or not password:
+                st.error("Email and password are required.")
+                st.stop()
+            if len(password) < 6:
+                st.error("Password must be at least 6 characters.")
+                st.stop()
+            if password != confirm:
+                st.error("Passwords do not match.")
+                st.stop()
+            try:
+                response = requests.post(
+                    f"{SUPABASE_URL}/auth/v1/signup",
+                    headers=auth_headers(),
+                    json={"email": email.strip(), "password": password, "data": {"full_name": full_name.strip()}},
+                    timeout=15,
+                )
+                if response.status_code in (200, 201):
+                    data = response.json()
+                    if data.get("access_token"):
+                        save_session(data)
+                        st.rerun()
+                    st.success("Account created. Please check your email, confirm your account, then log in.")
+                else:
+                    try:
+                        error_data = response.json()
+                        message = error_data.get("msg") or error_data.get("error_description") or error_data.get("message")
+                    except ValueError:
+                        message = None
+                    st.error(message or "Unable to create the account.")
+            except requests.RequestException:
+                st.error("Unable to connect to XIGA account service.")
 
-        except Exception:
-            st.error("Unable to connect to XIGA account service.")
-            st.stop()
+    else:
+        st.info("Enter your registered email and we will send a password reset link.")
+        with st.form("xiga_pro_forgot_password"):
+            email = st.text_input("Registered email")
+            send_reset = st.form_submit_button("SEND RESET LINK")
+        if send_reset:
+            if not email.strip():
+                st.error("Please enter your email address.")
+                st.stop()
+            try:
+                response = requests.post(
+                    f"{SUPABASE_URL}/auth/v1/recover",
+                    headers=auth_headers(),
+                    json={"email": email.strip(), "redirect_to": XIGA_PRO_URL},
+                    timeout=15,
+                )
+                if response.status_code in (200, 201):
+                    st.success("Password reset email sent. Open the email and follow the link to set a new password.")
+                else:
+                    st.error("Unable to send the password reset email. Check your Supabase redirect URL settings.")
+            except requests.RequestException:
+                st.error("Unable to connect to XIGA account service.")
 
     st.stop()
-xiga_subscription_login()
+
+if not handle_password_recovery():
+    xiga_subscription_login()
+else:
+    st.stop()
+
 # Market data providers. Public read-only market data is used; no trading API keys are needed.
 BIQUOTE_BASE = "https://biquote.io/api"
 BINANCE_BASE = "https://data-api.binance.vision"
@@ -724,6 +1007,10 @@ def analyze_market(provider, symbol, timeframe):
     if stats:
         description += f" Similar historical setups: {stats['samples']}."
 
+    recent_window = closed[-20:]
+    support = min(float(c["low"]) for c in recent_window) if recent_window else None
+    resistance = max(float(c["high"]) for c in recent_window) if recent_window else None
+
     return {
         "success": True,
         "signal": signal,
@@ -731,6 +1018,8 @@ def analyze_market(provider, symbol, timeframe):
         "probability": probability,
         "score": score,
         "price": current,
+        "support": support,
+        "resistance": resistance,
         "entry_candle_time": closed[-1]["datetime"],
         "rsi": rv,
         "macd": mv,
@@ -744,6 +1033,29 @@ def analyze_market(provider, symbol, timeframe):
         "news_status": news.get("status", "NO NEWS"),
         "reasons": reasons,
     }
+
+def calculate_trade_levels(signal, entry_price, atr_value, support=None, resistance=None):
+    entry = float(entry_price)
+    atr_value = float(atr_value or 0)
+    if entry <= 0:
+        return None, None, None
+    base_risk = max(atr_value * 1.10, entry * 0.001)
+    if signal == "CALL":
+        support_gap = entry - float(support) if support is not None else 0
+        risk = max(base_risk, support_gap + atr_value * 0.15 if support_gap > 0 else base_risk)
+        stop = entry - risk
+        resistance_gap = float(resistance) - entry if resistance is not None else 0
+        target = entry + max(risk * 1.5, resistance_gap if resistance_gap > risk * 1.05 else 0)
+    elif signal == "PUT":
+        resistance_gap = float(resistance) - entry if resistance is not None else 0
+        risk = max(base_risk, resistance_gap + atr_value * 0.15 if resistance_gap > 0 else base_risk)
+        stop = entry + risk
+        support_gap = entry - float(support) if support is not None else 0
+        target = entry - max(risk * 1.5, support_gap if support_gap > risk * 1.05 else 0)
+    else:
+        return None, None, None
+    decimals = max(2, min(8, len(f"{entry:.8f}".rstrip("0").split(".")[-1])))
+    return round(entry, decimals), round(target, decimals), round(stop, decimals)
 
 def calculate_outcome(signal, entry_price, result_price):
     entry_price = float(entry_price)
@@ -823,6 +1135,7 @@ div[data-testid="stSelectbox"] label{color:#7d93aa !important;font-size:8px !imp
 .xiga-circle{width:205px;height:205px;border-radius:50%;margin:25px auto 18px;display:flex;align-items:center;justify-content:center;position:relative}.xiga-circle.call{background:radial-gradient(circle,rgba(38,246,165,.43) 0%,rgba(14,74,61,.70) 35%,rgba(3,15,27,.98) 72%);border:3px solid #29f5a6;box-shadow:0 0 11px #29f5a6,0 0 35px rgba(41,245,166,.65),0 0 80px rgba(41,245,166,.22),inset 0 0 32px rgba(41,245,166,.27)}.xiga-circle.put{background:radial-gradient(circle,rgba(255,53,103,.42) 0%,rgba(82,17,41,.72) 35%,rgba(3,15,27,.98) 72%);border:3px solid #ff3d70;box-shadow:0 0 11px #ff3d70,0 0 35px rgba(255,61,112,.65),0 0 80px rgba(255,61,112,.22)}.xiga-circle.neutral{background:radial-gradient(circle,rgba(80,140,180,.28) 0%,rgba(17,46,68,.72) 35%,rgba(3,15,27,.98) 72%);border:3px solid #5e91b5;box-shadow:0 0 11px #5e91b5,0 0 35px rgba(94,145,181,.35)}.xiga-arrow{font-size:76px;font-weight:900;line-height:1}.call-text{color:#35f4a9;text-shadow:0 0 20px rgba(53,244,169,.3)}.put-text{color:#ff416f;text-shadow:0 0 20px rgba(255,65,111,.3)}.neutral-text{color:#8fb4cf}.xiga-signal-title{font-size:29px;font-weight:950;position:relative}.xiga-direction{color:#8597ac;font-size:9px;letter-spacing:2px;margin-top:4px}.xiga-stat{background:linear-gradient(145deg,rgba(7,29,49,.98),rgba(5,17,30,.98));border:1px solid #17557d;border-radius:15px;padding:13px 8px;text-align:center;min-height:100px}.xiga-stat-label{color:#8296ad;font-size:9px;text-transform:uppercase}.xiga-strength{color:#29f5a6;font-size:18px;margin-top:8px;letter-spacing:2px}.xiga-number{color:white;font-size:12px;font-weight:800;margin-top:3px}.xiga-win{color:#29f5a6;font-size:24px;font-weight:900;margin-top:6px;letter-spacing:1px}.xiga-ai{display:flex;gap:11px;align-items:center;margin-top:11px;padding:12px;text-align:left;border-radius:15px;background:linear-gradient(145deg,rgba(7,37,47,.97),rgba(5,19,31,.97));border:1px solid rgba(31,181,150,.55)}.xiga-ai-icon{width:35px;height:35px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#2af5a5;border:1px solid rgba(42,245,165,.48);flex-shrink:0}.xiga-ai-title{color:#2af5a5;font-size:11px;font-weight:900}.xiga-ai-desc{color:#7f92a7;font-size:8px;margin-top:3px}
 .stButton>button{width:100%;height:55px;border-radius:16px;border:1px solid #5affaf;background:linear-gradient(100deg,#13ca87,#38f5ad);color:#03130d;font-size:14px;font-weight:900;box-shadow:0 8px 28px rgba(37,245,166,.20)}.stButton>button:hover{border-color:#5affaf;color:#03130d}.xiga-footer{text-align:center;margin-top:9px;color:#4f647a;font-size:7px;letter-spacing:.5px}
 div[role="radiogroup"]{display:flex !important;justify-content:center !important;gap:4px !important;flex-wrap:nowrap !important;margin:0 0 12px !important}div[role="radiogroup"] label{color:#8ca1b7 !important;font-size:10px !important;padding:5px 7px !important;white-space:nowrap !important}div[role="radiogroup"] label:has(input:checked){color:#29f5a6 !important}
+.xiga-menu-button button{width:42px !important;height:42px !important;min-height:42px !important;padding:0 !important;border-radius:13px !important;background:rgba(11,30,49,.88) !important;border:1px solid #214967 !important;color:#dceeff !important;font-size:21px !important;box-shadow:none !important}.xiga-account-card{background:linear-gradient(145deg,rgba(13,34,57,.98),rgba(5,16,29,.99));border:1px solid rgba(32,91,132,.72);border-radius:18px;padding:14px;margin-bottom:12px}.xiga-account-label{color:#7d93aa;font-size:8px;letter-spacing:1.4px;text-transform:uppercase}.xiga-account-value{color:#fff;font-size:12px;font-weight:800;margin-top:4px}.xiga-levels{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:12px}.xiga-level{background:linear-gradient(145deg,rgba(7,29,49,.98),rgba(5,17,30,.98));border:1px solid #17557d;border-radius:12px;padding:9px 5px;text-align:center}.xiga-level-label{color:#8296ad;font-size:7px;text-transform:uppercase}.xiga-level-value{color:#29f5a6;font-size:11px;font-weight:900;margin-top:4px}.xiga-trade-levels{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin:14px 0 2px;padding:10px 6px;border-radius:15px;background:linear-gradient(145deg,rgba(7,29,49,.98),rgba(5,17,30,.98));border:1px solid #17557d}.xiga-trade-level{text-align:center;min-width:0}.xiga-trade-label{color:#8296ad;font-size:7px;text-transform:uppercase;letter-spacing:.4px}.xiga-trade-value{color:#fff;font-size:10px;font-weight:900;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.xiga-trade-value.entry{color:#29f5a6}.xiga-trade-value.tp{color:#7ed8ff}.xiga-trade-value.sl{color:#ff718e}
 header[data-testid="stHeader"] {
     display: none !important;
 }
@@ -835,16 +1148,30 @@ footer {
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("""
-<div class="xiga-top">
-<div class="xiga-menu">☰</div>
-<div class="xiga-brand">
-<div class="xiga-title"><span>▰</span> XIGA</div>
-<div class="xiga-subtitle">TRADING SIGNAL BOT</div>
-</div>
-<div class="xiga-pro">👑 PRO</div>
-</div>
-""", unsafe_allow_html=True)
+top_left, top_center, top_right = st.columns([0.18, 0.64, 0.18])
+with top_left:
+    st.markdown('<div class="xiga-menu-button">', unsafe_allow_html=True)
+    menu_clicked = st.button("☰", key="account_menu_button")
+    st.markdown('</div>', unsafe_allow_html=True)
+with top_center:
+    st.markdown('<div class="xiga-brand"><div class="xiga-title"><span>▰</span> XIGA</div><div class="xiga-subtitle">TRADING SIGNAL BOT</div></div>', unsafe_allow_html=True)
+with top_right:
+    st.markdown('<div class="xiga-pro">👑 PRO</div>', unsafe_allow_html=True)
+
+if menu_clicked:
+    st.session_state["show_account_menu"] = not st.session_state.get("show_account_menu", False)
+
+if st.session_state.get("show_account_menu"):
+    status = st.session_state.get("xiga_status") or {}
+    email = st.session_state.get("xiga_email", "Account")
+    expiry = status.get("subscription_expires_at") or "—"
+    days = status.get("days_remaining", 0)
+    expiry_short = str(expiry)[:10] if expiry != "—" else "—"
+    st.markdown(f'<div class="xiga-account-card"><div class="xiga-account-label">ACCOUNT</div><div class="xiga-account-value">{email}</div><div class="xiga-levels"><div class="xiga-level"><div class="xiga-level-label">STATUS</div><div class="xiga-level-value">ACTIVE</div></div><div class="xiga-level"><div class="xiga-level-label">DAYS LEFT</div><div class="xiga-level-value">{days}</div></div><div class="xiga-level"><div class="xiga-level-label">EXPIRES</div><div class="xiga-level-value">{expiry_short}</div></div></div></div>', unsafe_allow_html=True)
+    if st.button("LOG OUT", key="account_logout", use_container_width=True):
+        clear_session()
+        st.session_state["show_account_menu"] = False
+        st.rerun()
 
 nav_options = ["Trade", "History", "Learn", "Profile"]
 selected_page = st.radio(
@@ -951,6 +1278,16 @@ if selected_page == "Trade":
             tracker_line = ""
 
         description = result.get("description", "Select an asset and start analysis.")
+        active_levels = st.session_state.get("trade_pending") or {}
+        level_signal = result.get("signal")
+        level_entry = active_levels.get("entry_price") if active_levels else None
+        level_tp = active_levels.get("take_profit") if active_levels else None
+        level_sl = active_levels.get("stop_loss") if active_levels else None
+        levels_html = ""
+        if level_signal in ("CALL", "PUT") and level_entry is not None and level_tp is not None and level_sl is not None:
+            entry_label = "BUY AT" if level_signal == "CALL" else "SELL AT"
+            levels_html = f'<div class="xiga-trade-levels"><div class="xiga-trade-level"><div class="xiga-trade-label">{entry_label}</div><div class="xiga-trade-value entry">{level_entry:.8g}</div></div><div class="xiga-trade-level"><div class="xiga-trade-label">TAKE PROFIT</div><div class="xiga-trade-value tp">{level_tp:.8g}</div></div><div class="xiga-trade-level"><div class="xiga-trade-label">STOP LOSS</div><div class="xiga-trade-value sl">{level_sl:.8g}</div></div></div>'
+
         st.markdown(f'''
 <div class="xiga-card xiga-signal">
 <div class="xiga-signal-label">SIGNAL FOR</div>
@@ -959,6 +1296,7 @@ if selected_page == "Trade":
 <div class="xiga-circle {circle_class}"><div class="xiga-arrow">{arrow}</div></div>
 <div class="xiga-signal-title {title_class}">{title}</div>
 <div class="xiga-direction">{direction}</div>
+{levels_html}
 <br>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
 <div class="xiga-stat"><div class="xiga-stat-label">SIGNAL STRENGTH</div><div class="xiga-strength">{strength_html}</div><div class="xiga-number">{strength}/5</div></div>
@@ -1003,6 +1341,7 @@ if selected_page == "Trade":
             if analysis.get("success") and analysis.get("signal") in ("CALL", "PUT"):
                 entry_tick, entry_status = get_latest_tick(selected_provider, symbol)
                 entry_price = float(entry_tick["price"]) if entry_tick else float(analysis.get("price", 0))
+                entry_level, take_profit, stop_loss = calculate_trade_levels(analysis["signal"], entry_price, analysis.get("atr"), analysis.get("support"), analysis.get("resistance"))
                 duration_minutes = 1 if tf == "1 MIN" else 5
                 start = datetime.now(ZoneInfo("Asia/Karachi"))
                 trade_id = analysis_pending["id"]
@@ -1010,6 +1349,7 @@ if selected_page == "Trade":
                     "id": trade_id, "asset": analysis_pending["asset"], "symbol": symbol, "provider": selected_provider,
                     "timeframe": tf, "signal": analysis["signal"],
                     "probability": int(analysis.get("probability", 50)), "entry_price": entry_price,
+                    "take_profit": take_profit, "stop_loss": stop_loss,
                     "started_at": start.isoformat(), "complete_at": (start + timedelta(minutes=duration_minutes)).isoformat(),
                     "state": "TRADE COUNTDOWN", "error": "",
                 }
@@ -1017,6 +1357,7 @@ if selected_page == "Trade":
                     "id": trade_id, "asset": analysis_pending["asset"], "symbol": symbol, "provider": selected_provider,
                     "signal": analysis["signal"], "strength": analysis.get("strength", 0),
                     "probability": analysis.get("probability", 50), "price": entry_price,
+                    "take_profit": take_profit, "stop_loss": stop_loss,
                     "timeframe": tf, "time": start.strftime("%Y-%m-%d %H:%M:%S PKT"), "provider": selected_provider,
                     "status": "PENDING", "result_price": "—",
                     "analysis_description": analysis.get("description", ""), "entry_status": entry_status,
