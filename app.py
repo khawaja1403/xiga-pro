@@ -1,7 +1,7 @@
 
 import streamlit as st
 import requests
-import streamlit.components.v1 as components
+from streamlit_js import st_js_blocking
 import extra_streamlit_components as stx
 import base64
 import hashlib
@@ -41,12 +41,13 @@ def set_persistent_refresh_cookie(refresh_token):
     )
 
 def get_persistent_refresh_cookie():
-    value = COOKIE_MANAGER.get(COOKIE_NAME)
-    if not value:
-        return ""
     try:
-        return COOKIE_FERNET.decrypt(value.encode()).decode()
-    except (InvalidToken, ValueError, TypeError):
+        cookies = COOKIE_MANAGER.get_all(key="xiga-refresh-cookie-read")
+        value = cookies.get(COOKIE_NAME) if cookies else None
+        if not value:
+            return ""
+        return COOKIE_FERNET.decrypt(str(value).encode()).decode()
+    except (InvalidToken, ValueError, TypeError, AttributeError):
         return ""
 
 def delete_persistent_refresh_cookie():
@@ -161,8 +162,18 @@ def refresh_access_token(refresh_token):
 def ensure_session_from_cookie():
     if st.session_state.get("xiga_access_token"):
         return True
+
     refresh_token = get_persistent_refresh_cookie()
-    return bool(refresh_token and refresh_access_token(refresh_token))
+    if refresh_token:
+        return bool(refresh_access_token(refresh_token))
+
+    # CookieManager reads asynchronously after a fresh Streamlit session.
+    # Give the browser one rerun before showing the login screen.
+    if not st.session_state.get("xiga_cookie_checked"):
+        st.session_state["xiga_cookie_checked"] = True
+        st.stop()
+
+    return False
 
 def get_subscription_status():
     token = st.session_state.get("xiga_access_token")
@@ -207,53 +218,48 @@ def call_xiga_function(action, key=None):
     except requests.RequestException:
         return 0, {"error": "Unable to connect to XIGA subscription service."}
 
-def render_password_recovery_helper():
-    # Convert the Supabase recovery URL hash into temporary query parameters so
-    # Streamlit Python can display the reset form. The recovery values are removed
-    # from the URL immediately after the password is changed.
-    components.html(
-        """
-<script>
-(function() {
-  const hash = window.parent.location.hash || window.location.hash || "";
-  if (!hash.includes("type=recovery") || !hash.includes("access_token=")) return;
-  const params = new URLSearchParams(hash.replace(/^#/, ""));
-  const accessToken = params.get("access_token");
-  const refreshToken = params.get("refresh_token") || "";
-  if (!accessToken) return;
-  const target = new URL(window.parent.location.href);
-  target.hash = "";
-  target.searchParams.set("xiga_recovery", "1");
-  target.searchParams.set("xiga_access", accessToken);
-  target.searchParams.set("xiga_refresh", refreshToken);
-  window.parent.location.replace(target.toString());
-})();
-</script>
-""",
-        height=1,
-    )
-
+def get_browser_recovery_hash():
+    """Read the Supabase recovery hash from the actual XIGA page."""
+    try:
+        value = st_js_blocking(
+            code="return window.parent.location.hash || window.location.hash || '';"
+        )
+        return value or ""
+    except Exception:
+        return ""
 
 def handle_password_recovery():
-    params = st.query_params
-    if params.get("xiga_recovery") == "1" and not st.session_state.get("xiga_recovery_token"):
-        st.session_state["xiga_recovery_token"] = params.get("xiga_access", "")
-        st.session_state["xiga_recovery_refresh"] = params.get("xiga_refresh", "")
-        for key in ("xiga_recovery", "xiga_access", "xiga_refresh"):
-            params.pop(key, None)
-        st.rerun()
+    # Supabase returns recovery tokens in the URL fragment.
+    # Read the fragment before the normal login flow is rendered.
+    recovery_hash = get_browser_recovery_hash()
+    if recovery_hash and "type=recovery" in recovery_hash and "access_token=" in recovery_hash:
+        from urllib.parse import parse_qs
+        values = parse_qs(recovery_hash.lstrip("#"), keep_blank_values=True)
+        access_token = values.get("access_token", [""])[0]
+        refresh_token = values.get("refresh_token", [""])[0]
+        if access_token:
+            st.session_state["xiga_recovery_token"] = access_token
+            st.session_state["xiga_recovery_refresh"] = refresh_token
+            try:
+                st_js_blocking(
+                    code="window.parent.history.replaceState({}, document.title, window.parent.location.pathname + window.parent.location.search); return true;"
+                )
+            except Exception:
+                pass
+            st.rerun()
 
     access_token = st.session_state.get("xiga_recovery_token", "")
     refresh_token = st.session_state.get("xiga_recovery_refresh", "")
     if not access_token:
         return False
 
+    render_auth_styles()
     st.markdown("## RESET PASSWORD")
     st.caption("Create a new password for your XIGA account.")
     with st.form("xiga_password_reset"):
-        new_password = st.text_input("New password", type="password")
-        confirm_password = st.text_input("Confirm new password", type="password")
-        reset = st.form_submit_button("SAVE NEW PASSWORD")
+        new_password = st.text_input("New password", type="password", placeholder="Enter your new password")
+        confirm_password = st.text_input("Confirm new password", type="password", placeholder="Confirm your new password")
+        reset = st.form_submit_button("SAVE NEW PASSWORD", use_container_width=True)
 
     if reset:
         if len(new_password) < 6:
@@ -281,8 +287,8 @@ def handle_password_recovery():
             if response.status_code == 200:
                 st.session_state.pop("xiga_recovery_token", None)
                 st.session_state.pop("xiga_recovery_refresh", None)
-                st.success("Password updated successfully. Please log in with your new password.")
                 st.session_state["access_mode"] = "LOGIN"
+                st.success("Password updated successfully. Please log in with your new password.")
                 st.rerun()
             else:
                 try:
@@ -294,8 +300,26 @@ def handle_password_recovery():
             st.error("Unable to connect to the XIGA account service.")
     return True
 
+def render_auth_styles():
+    st.markdown("""
+<style>
+html,body,[data-testid="stAppViewContainer"]{background:radial-gradient(circle at 50% -15%,#173957 0%,#0a1c30 28%,#030914 65%,#020711 100%) !important}
+[data-testid="stHeader"]{display:none !important}
+[data-testid="stMainBlockContainer"]{max-width:500px !important;padding-top:0 !important;padding-left:12px !important;padding-right:12px !important}
+.block-container{padding-top:0 !important;padding-bottom:24px !important}
+.xiga-auth-topbar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;width:100%;margin:0 0 22px;padding:10px 0 8px}
+.xiga-auth-brand{text-align:center;color:#fff;font-size:26px;font-weight:950;letter-spacing:1.5px;white-space:nowrap}.xiga-auth-brand span{color:#28f3a5}.xiga-auth-pro-wrap{display:flex;justify-content:flex-end}.xiga-auth-pro{min-width:70px;padding:9px 10px;text-align:center;border-radius:12px;background:linear-gradient(135deg,#3d2d0d,#1f1809);border:1px solid #9b741d;color:#ffd76a;font-size:11px;font-weight:900}
+.xiga-auth-title{color:#fff;font-size:30px;font-weight:950;letter-spacing:.5px;margin-top:0}.xiga-auth-title span{color:#28f3a5}.xiga-auth-sub{color:#8ca1b7;font-size:11px;line-height:1.6;margin:7px 0 18px}
+div[role="radiogroup"]{display:flex !important;justify-content:center !important;gap:2px !important;flex-wrap:nowrap !important;margin:0 0 14px !important}div[role="radiogroup"] label{color:#8ca1b7 !important;font-size:10px !important;padding:6px 6px !important;white-space:nowrap !important}div[role="radiogroup"] label:has(input:checked){color:#29f5a6 !important}
+div[data-testid="stTextInput"] label{color:#dceeff !important;font-size:12px !important}div[data-testid="stTextInput"] input{background:linear-gradient(145deg,rgba(9,39,64,.98),rgba(7,25,43,.98)) !important;border:1px solid #185276 !important;border-radius:13px !important;color:#fff !important;min-height:48px !important}
+.xiga-auth-card{background:linear-gradient(145deg,rgba(13,34,57,.96),rgba(5,16,29,.97));border:1px solid rgba(32,91,132,.72);border-radius:20px;padding:16px;margin-top:4px;box-shadow:0 18px 45px rgba(0,0,0,.32),inset 0 1px rgba(255,255,255,.035)}
+.stButton>button,[data-testid="stFormSubmitButton"] button{height:52px;border-radius:15px;border:1px solid #5affaf;background:linear-gradient(100deg,#13ca87,#38f5ad);color:#03130d;font-size:14px;font-weight:900;box-shadow:0 8px 28px rgba(37,245,166,.20)}
+footer,#MainMenu{display:none !important}
+</style>
+""", unsafe_allow_html=True)
+
 def xiga_subscription_login():
-    render_password_recovery_helper()
+    render_auth_styles()
     if not SUPABASE_URL or not SUPABASE_PUBLISHABLE_KEY:
         st.error("XIGA PRO subscription settings are missing.")
         st.stop()
@@ -341,8 +365,9 @@ def xiga_subscription_login():
             st.rerun()
         st.stop()
 
-    st.markdown("## XIGA PRO SECURE ACCESS")
-    st.caption("Use your XIGA account to access the XIGA PRO trading app.")
+    st.markdown('<div class="xiga-auth-topbar"><div></div><div class="xiga-auth-brand"><span>▰</span> XIGA</div><div class="xiga-auth-pro-wrap"><div class="xiga-auth-pro">👑 PRO</div></div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="xiga-auth-title">XIGA <span>PRO</span><br>SECURE ACCESS</div>', unsafe_allow_html=True)
+    st.markdown('<div class="xiga-auth-sub">Use your XIGA account to access the XIGA PRO trading app.</div>', unsafe_allow_html=True)
     mode = st.radio("Access", ["LOGIN", "SIGN UP", "FORGOT PASSWORD"], horizontal=True, label_visibility="collapsed", key="access_mode")
 
     if mode == "LOGIN":
@@ -1126,16 +1151,16 @@ st.markdown("""
 <style>
 html,body,[data-testid="stAppViewContainer"]{background:radial-gradient(circle at 50% -10%,#173957 0%,#0a1c30 25%,#030914 62%,#020711 100%) !important}
 [data-testid="stHeader"]{background:transparent !important}
-[data-testid="stMainBlockContainer"]{max-width:500px !important;padding-top:12px !important;padding-left:12px !important;padding-right:12px !important}
-.block-container{padding-bottom:25px !important}
-.xiga-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.xiga-menu{width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;background:rgba(11,30,49,.88);border:1px solid #214967;color:#dceeff;font-size:21px}.xiga-brand{text-align:center;flex:1}.xiga-title{color:#fff;font-size:25px;font-weight:900;letter-spacing:1px}.xiga-title span{color:#28f3a5}.xiga-subtitle{margin-top:4px;color:#71859d;font-size:8px;letter-spacing:2px}.xiga-pro{min-width:66px;padding:9px 8px;text-align:center;border-radius:12px;background:linear-gradient(135deg,#3d2d0d,#1f1809);border:1px solid #9b741d;color:#ffd76a;font-size:10px;font-weight:800}
+[data-testid="stMainBlockContainer"]{max-width:500px !important;padding-top:0 !important;padding-left:12px !important;padding-right:12px !important}
+.block-container{padding-top:0 !important;padding-bottom:25px !important}
+.xiga-topbar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;width:100%;margin:0 0 12px;padding:0}.xiga-brand{text-align:center}.xiga-title{color:#fff;font-size:25px;font-weight:900;letter-spacing:1px}.xiga-title span{color:#28f3a5}.xiga-subtitle{margin-top:4px;color:#71859d;font-size:8px;letter-spacing:2px}.xiga-pro-wrap{display:flex;justify-content:flex-end}.xiga-pro{min-width:66px;padding:9px 8px;text-align:center;border-radius:12px;background:linear-gradient(135deg,#3d2d0d,#1f1809);border:1px solid #9b741d;color:#ffd76a;font-size:10px;font-weight:800}
 .xiga-card{background:linear-gradient(145deg,rgba(13,34,57,.96),rgba(5,16,29,.97));border:1px solid rgba(32,91,132,.72);border-radius:20px;box-shadow:0 18px 45px rgba(0,0,0,.32),inset 0 1px rgba(255,255,255,.035);padding:12px;margin-bottom:12px}
 div[data-testid="stSelectbox"] label{color:#7d93aa !important;font-size:8px !important;letter-spacing:1.4px !important;text-transform:uppercase !important}div[data-baseweb="select"]>div{background:linear-gradient(145deg,rgba(9,39,64,.98),rgba(7,25,43,.98)) !important;border:1px solid #185276 !important;color:white !important;border-radius:12px !important}div[data-baseweb="select"] span{color:white !important}.xiga-market-status{color:#29f4a5;font-size:7px;margin-top:3px}
 .xiga-signal{text-align:center;position:relative;overflow:hidden;min-height:560px}.xiga-signal:before{content:"";position:absolute;left:-10%;right:-10%;top:105px;height:190px;opacity:.22;background:repeating-linear-gradient(0deg,transparent 0px,transparent 45px,#226082 46px)}.xiga-signal-label{color:#8ca1b7;font-size:9px;letter-spacing:1.5px;text-transform:uppercase;position:relative}.xiga-asset{color:white;font-size:22px;font-weight:900;position:relative;margin-top:4px}.xiga-time{color:#28f3a5;font-size:9px;letter-spacing:1px;margin-top:4px;position:relative}
 .xiga-circle{width:205px;height:205px;border-radius:50%;margin:25px auto 18px;display:flex;align-items:center;justify-content:center;position:relative}.xiga-circle.call{background:radial-gradient(circle,rgba(38,246,165,.43) 0%,rgba(14,74,61,.70) 35%,rgba(3,15,27,.98) 72%);border:3px solid #29f5a6;box-shadow:0 0 11px #29f5a6,0 0 35px rgba(41,245,166,.65),0 0 80px rgba(41,245,166,.22),inset 0 0 32px rgba(41,245,166,.27)}.xiga-circle.put{background:radial-gradient(circle,rgba(255,53,103,.42) 0%,rgba(82,17,41,.72) 35%,rgba(3,15,27,.98) 72%);border:3px solid #ff3d70;box-shadow:0 0 11px #ff3d70,0 0 35px rgba(255,61,112,.65),0 0 80px rgba(255,61,112,.22)}.xiga-circle.neutral{background:radial-gradient(circle,rgba(80,140,180,.28) 0%,rgba(17,46,68,.72) 35%,rgba(3,15,27,.98) 72%);border:3px solid #5e91b5;box-shadow:0 0 11px #5e91b5,0 0 35px rgba(94,145,181,.35)}.xiga-arrow{font-size:76px;font-weight:900;line-height:1}.call-text{color:#35f4a9;text-shadow:0 0 20px rgba(53,244,169,.3)}.put-text{color:#ff416f;text-shadow:0 0 20px rgba(255,65,111,.3)}.neutral-text{color:#8fb4cf}.xiga-signal-title{font-size:29px;font-weight:950;position:relative}.xiga-direction{color:#8597ac;font-size:9px;letter-spacing:2px;margin-top:4px}.xiga-stat{background:linear-gradient(145deg,rgba(7,29,49,.98),rgba(5,17,30,.98));border:1px solid #17557d;border-radius:15px;padding:13px 8px;text-align:center;min-height:100px}.xiga-stat-label{color:#8296ad;font-size:9px;text-transform:uppercase}.xiga-strength{color:#29f5a6;font-size:18px;margin-top:8px;letter-spacing:2px}.xiga-number{color:white;font-size:12px;font-weight:800;margin-top:3px}.xiga-win{color:#29f5a6;font-size:24px;font-weight:900;margin-top:6px;letter-spacing:1px}.xiga-ai{display:flex;gap:11px;align-items:center;margin-top:11px;padding:12px;text-align:left;border-radius:15px;background:linear-gradient(145deg,rgba(7,37,47,.97),rgba(5,19,31,.97));border:1px solid rgba(31,181,150,.55)}.xiga-ai-icon{width:35px;height:35px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#2af5a5;border:1px solid rgba(42,245,165,.48);flex-shrink:0}.xiga-ai-title{color:#2af5a5;font-size:11px;font-weight:900}.xiga-ai-desc{color:#7f92a7;font-size:8px;margin-top:3px}
 .stButton>button{width:100%;height:55px;border-radius:16px;border:1px solid #5affaf;background:linear-gradient(100deg,#13ca87,#38f5ad);color:#03130d;font-size:14px;font-weight:900;box-shadow:0 8px 28px rgba(37,245,166,.20)}.stButton>button:hover{border-color:#5affaf;color:#03130d}.xiga-footer{text-align:center;margin-top:9px;color:#4f647a;font-size:7px;letter-spacing:.5px}
 div[role="radiogroup"]{display:flex !important;justify-content:center !important;gap:4px !important;flex-wrap:nowrap !important;margin:0 0 12px !important}div[role="radiogroup"] label{color:#8ca1b7 !important;font-size:10px !important;padding:5px 7px !important;white-space:nowrap !important}div[role="radiogroup"] label:has(input:checked){color:#29f5a6 !important}
-.xiga-menu-button button{width:42px !important;height:42px !important;min-height:42px !important;padding:0 !important;border-radius:13px !important;background:rgba(11,30,49,.88) !important;border:1px solid #214967 !important;color:#dceeff !important;font-size:21px !important;box-shadow:none !important}.xiga-account-card{background:linear-gradient(145deg,rgba(13,34,57,.98),rgba(5,16,29,.99));border:1px solid rgba(32,91,132,.72);border-radius:18px;padding:14px;margin-bottom:12px}.xiga-account-label{color:#7d93aa;font-size:8px;letter-spacing:1.4px;text-transform:uppercase}.xiga-account-value{color:#fff;font-size:12px;font-weight:800;margin-top:4px}.xiga-levels{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:12px}.xiga-level{background:linear-gradient(145deg,rgba(7,29,49,.98),rgba(5,17,30,.98));border:1px solid #17557d;border-radius:12px;padding:9px 5px;text-align:center}.xiga-level-label{color:#8296ad;font-size:7px;text-transform:uppercase}.xiga-level-value{color:#29f5a6;font-size:11px;font-weight:900;margin-top:4px}.xiga-trade-levels{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin:14px 0 2px;padding:10px 6px;border-radius:15px;background:linear-gradient(145deg,rgba(7,29,49,.98),rgba(5,17,30,.98));border:1px solid #17557d}.xiga-trade-level{text-align:center;min-width:0}.xiga-trade-label{color:#8296ad;font-size:7px;text-transform:uppercase;letter-spacing:.4px}.xiga-trade-value{color:#fff;font-size:10px;font-weight:900;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.xiga-trade-value.entry{color:#29f5a6}.xiga-trade-value.tp{color:#7ed8ff}.xiga-trade-value.sl{color:#ff718e}
+.xiga-account-card{background:linear-gradient(145deg,rgba(13,34,57,.98),rgba(5,16,29,.99));border:1px solid rgba(32,91,132,.72);border-radius:18px;padding:14px;margin-bottom:12px}.xiga-account-label{color:#7d93aa;font-size:8px;letter-spacing:1.4px;text-transform:uppercase}.xiga-account-value{color:#fff;font-size:12px;font-weight:800;margin-top:4px}.xiga-levels{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:12px}.xiga-level{background:linear-gradient(145deg,rgba(7,29,49,.98),rgba(5,17,30,.98));border:1px solid #17557d;border-radius:12px;padding:9px 5px;text-align:center}.xiga-level-label{color:#8296ad;font-size:7px;text-transform:uppercase}.xiga-level-value{color:#29f5a6;font-size:11px;font-weight:900;margin-top:4px}.xiga-trade-levels{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin:14px 0 2px;padding:10px 6px;border-radius:15px;background:linear-gradient(145deg,rgba(7,29,49,.98),rgba(5,17,30,.98));border:1px solid #17557d}.xiga-trade-level{text-align:center;min-width:0}.xiga-trade-label{color:#8296ad;font-size:7px;text-transform:uppercase;letter-spacing:.4px}.xiga-trade-value{color:#fff;font-size:10px;font-weight:900;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.xiga-trade-value.entry{color:#29f5a6}.xiga-trade-value.tp{color:#7ed8ff}.xiga-trade-value.sl{color:#ff718e}
 header[data-testid="stHeader"] {
     display: none !important;
 }
@@ -1148,13 +1173,7 @@ footer {
 </style>
 """, unsafe_allow_html=True)
 
-top_left, top_center, top_right = st.columns([0.18, 0.64, 0.18])
-with top_left:
-    st.empty()
-with top_center:
-    st.markdown('<div class="xiga-brand"><div class="xiga-title"><span>▰</span> XIGA</div><div class="xiga-subtitle">TRADING SIGNAL BOT</div></div>', unsafe_allow_html=True)
-with top_right:
-    st.markdown('<div class="xiga-pro">👑 PRO</div>', unsafe_allow_html=True)
+st.markdown('<div class="xiga-topbar"><div></div><div class="xiga-brand"><div class="xiga-title"><span>▰</span> XIGA</div><div class="xiga-subtitle">TRADING SIGNAL BOT</div></div><div class="xiga-pro-wrap"><div class="xiga-pro">👑 PRO</div></div></div>', unsafe_allow_html=True)
 
 nav_options = ["Trade", "History", "Learn", "Profile"]
 selected_page = st.radio(
