@@ -950,26 +950,46 @@ def analyze_market(provider, symbol, timeframe):
         "reasons": reasons,
     }
 
-def calculate_trade_levels(signal, entry_price, atr_value, support=None, resistance=None):
+def calculate_trade_levels(signal, entry_price, atr_value, support=None, resistance=None, timeframe="1 MIN"):
+    """
+    Short-duration trade levels.
+
+    The previous version allowed 20-candle support/resistance gaps to determine
+    the risk distance. That can place TP/SL far away from the live entry,
+    especially on fast 1-minute signals. For the XIGA trade window, levels are
+    now driven primarily by current ATR and capped by the selected timeframe.
+    """
     entry = float(entry_price)
     atr_value = float(atr_value or 0)
     if entry <= 0:
         return None, None, None
-    base_risk = max(atr_value * 1.10, entry * 0.001)
+
+    if timeframe == "5 MIN":
+        atr_multiplier = 0.90
+        min_risk_pct = 0.00015   # 0.015%
+        max_risk_pct = 0.00150   # 0.15%
+    else:
+        atr_multiplier = 0.65
+        min_risk_pct = 0.00008   # 0.008%
+        max_risk_pct = 0.00060   # 0.06%
+
+    # Keep levels close enough for the actual short trade window.
+    risk = max(atr_value * atr_multiplier, entry * min_risk_pct)
+    risk = min(risk, entry * max_risk_pct)
+
+    # Fixed short-term risk/reward target. Do not expand it using distant
+    # support/resistance because those levels may be many candles away.
+    reward = risk * 1.25
+
     if signal == "CALL":
-        support_gap = entry - float(support) if support is not None else 0
-        risk = max(base_risk, support_gap + atr_value * 0.15 if support_gap > 0 else base_risk)
         stop = entry - risk
-        resistance_gap = float(resistance) - entry if resistance is not None else 0
-        target = entry + max(risk * 1.5, resistance_gap if resistance_gap > risk * 1.05 else 0)
+        target = entry + reward
     elif signal == "PUT":
-        resistance_gap = float(resistance) - entry if resistance is not None else 0
-        risk = max(base_risk, resistance_gap + atr_value * 0.15 if resistance_gap > 0 else base_risk)
         stop = entry + risk
-        support_gap = entry - float(support) if support is not None else 0
-        target = entry - max(risk * 1.5, support_gap if support_gap > risk * 1.05 else 0)
+        target = entry - reward
     else:
         return None, None, None
+
     decimals = max(2, min(8, len(f"{entry:.8f}".rstrip("0").split(".")[-1])))
     return round(entry, decimals), round(target, decimals), round(stop, decimals)
 
@@ -1234,7 +1254,7 @@ if selected_page == "Trade":
             if analysis.get("success") and analysis.get("signal") in ("CALL", "PUT"):
                 entry_tick, entry_status = get_latest_tick(selected_provider, symbol)
                 entry_price = float(entry_tick["price"]) if entry_tick else float(analysis.get("price", 0))
-                entry_level, take_profit, stop_loss = calculate_trade_levels(analysis["signal"], entry_price, analysis.get("atr"), analysis.get("support"), analysis.get("resistance"))
+                entry_level, take_profit, stop_loss = calculate_trade_levels(analysis["signal"], entry_price, analysis.get("atr"), analysis.get("support"), analysis.get("resistance"), tf)
                 duration_minutes = 1 if tf == "1 MIN" else 5
                 start = datetime.now(ZoneInfo("Asia/Karachi"))
                 trade_id = analysis_pending["id"]
