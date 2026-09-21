@@ -1017,6 +1017,58 @@ def historical_favorable_excursion(candles, resolution, signal, max_samples=120)
     }
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def run_xiga_backtest(provider, symbol, timeframe):
+    resolution = TIMEFRAMES.get(timeframe)
+    if not resolution: return {"success":False,"error":"Unsupported timeframe."}
+    candles, status = get_candles(provider, symbol, resolution, fresh=True)
+    closed = completed_candles(candles, resolution)
+    if len(closed) < 80: return {"success":False,"error":f"Not enough completed candles ({len(closed)})."}
+    wins=losses=draws=calls=puts=call_wins=put_wins=tp_hits=tp_misses=0; favorable=[]
+    for i in range(55, len(closed)-1):
+        window=closed[:i+1]; closes=[float(x["close"]) for x in window]; entry=closes[-1]
+        e9,e21,e50=ema(closes,9),ema(closes,21),ema(closes,50); rv=rsi(closes,14); mv,_=macd(closes); score=0; bullish=bearish=0
+        if e9 is not None and e21 is not None:
+            if e9>e21: score+=1; bullish+=1
+            elif e9<e21: score-=1; bearish+=1
+        if e21 is not None and e50 is not None:
+            if e21>e50: score+=1; bullish+=1
+            elif e21<e50: score-=1; bearish+=1
+        if e21 is not None:
+            if entry>e21: score+=1; bullish+=1
+            elif entry<e21: score-=1; bearish+=1
+        if rv is not None:
+            if rv>=55: score+=1; bullish+=1
+            elif rv<=45: score-=1; bearish+=1
+        if mv is not None:
+            if mv>0: score+=1; bullish+=1
+            elif mv<0: score-=1; bearish+=1
+        if len(closes)>=6:
+            if closes[-1]>closes[-6]: score+=1; bullish+=1
+            elif closes[-1]<closes[-6]: score-=1; bearish+=1
+        direction="CALL" if score>=3 else "PUT" if score<=-3 else None
+        if not direction or (direction=="CALL" and bearish>bullish) or (direction=="PUT" and bullish>bearish): continue
+        future=closed[i+1]; fc=float(future["close"]); calls+=direction=="CALL"; puts+=direction=="PUT"
+        if direction=="CALL":
+            good=fc>entry; fav=max(0.0,(float(future["high"])-entry)/entry)
+            if good: wins+=1; call_wins+=1
+            elif fc<entry: losses+=1
+            else: draws+=1
+        else:
+            good=fc<entry; fav=max(0.0,(entry-float(future["low"]))/entry)
+            if good: wins+=1; put_wins+=1
+            elif fc>entry: losses+=1
+            else: draws+=1
+        favorable.append(fav)
+        hist_atr=atr(window,14); profile=historical_favorable_excursion(window,resolution,direction,max_samples=60)
+        _,tp,_=calculate_trade_levels(direction,entry,hist_atr,timeframe=timeframe,tp_profile=profile)
+        if tp is not None:
+            hit=float(future["high"])>=tp if direction=="CALL" else float(future["low"])<=tp
+            if hit: tp_hits+=1
+            else: tp_misses+=1
+    decided=wins+losses; total_tp=tp_hits+tp_misses; calls_n=calls or 1; puts_n=puts or 1
+    return {"success":True,"symbol":symbol,"timeframe":timeframe,"candles":len(closed),"signals":calls+puts,"calls":calls,"puts":puts,"wins":wins,"losses":losses,"draws":draws,"accuracy":wins/decided*100 if decided else 0,"call_accuracy":call_wins/calls_n*100 if calls else 0,"put_accuracy":put_wins/puts_n*100 if puts else 0,"tp_hits":tp_hits,"tp_misses":tp_misses,"tp_rate":tp_hits/total_tp*100 if total_tp else 0,"avg_favorable":sum(favorable)/len(favorable)*100 if favorable else 0,"status":status}
+
 def calculate_trade_levels(signal, entry_price, atr_value, support=None, resistance=None, timeframe="1 MIN", tp_profile=None):
     """
     Adaptive short-duration trade levels.
@@ -1457,41 +1509,35 @@ if selected_page == "Trade":
 elif selected_page == "History":
     st.markdown('<div class="xiga-card">', unsafe_allow_html=True)
     st.markdown("### 📊 XIGA Trade History")
-
-    if not st.session_state.history:
-        st.info("No signals have been generated yet.")
+    st.markdown("#### 🧪 AI BACKTEST / PERFORMANCE")
+    st.caption("Tests the existing XIGA directional logic against historical candles. It does not change the live analysis engine.")
+    b1,b2=st.columns(2)
+    with b1: bt_provider=st.selectbox("Backtest Platform",EXCHANGE_PROVIDERS,key="bt_provider")
+    if bt_provider=="BiQuote":
+        cats=list(ASSETS.keys()); bt_cat=st.selectbox("Backtest Asset Type",cats,key="bt_category"); bt_map=ASSETS.get(bt_cat) or {}
+    else:
+        st.selectbox("Backtest Asset Type",["Crypto / USDT"],disabled=True,key=f"bt_type_{bt_provider}"); bt_map=EXCHANGE_ASSETS[bt_provider]
+    bt_assets=list(bt_map.keys())
+    if bt_assets:
+        bt_asset=st.selectbox("Backtest Market",bt_assets,key="bt_asset"); bt_tf=st.selectbox("Backtest Timeframe",list(TIMEFRAMES.keys()),key="bt_timeframe")
+        if st.button("🧪 RUN BACKTEST",key="run_backtest",use_container_width=True):
+            with st.spinner("Testing historical candles..."): st.session_state.backtest_result=run_xiga_backtest(bt_provider,bt_map[bt_asset],bt_tf)
+        bt=st.session_state.get("backtest_result")
+        if bt:
+            if not bt.get("success"): st.error(bt.get("error","Backtest failed."))
+            else:
+                st.markdown(f"**{bt['symbol']} • {bt['timeframe']} • {bt['candles']} completed candles**")
+                st.markdown(f"**Signals:** {bt['signals']}  •  **CALL:** {bt['calls']}  •  **PUT:** {bt['puts']}  •  **Directional accuracy:** {bt['accuracy']:.1f}%")
+                st.markdown(f"**CALL accuracy:** {bt['call_accuracy']:.1f}%  •  **PUT accuracy:** {bt['put_accuracy']:.1f}%")
+                st.markdown(f"**TP reached:** {bt['tp_hits']}  •  **TP not reached:** {bt['tp_misses']}  •  **TP-hit rate:** {bt['tp_rate']:.1f}%")
+                st.markdown(f"**Average favorable movement:** {bt['avg_favorable']:.3f}%")
+                st.caption("Historical results are diagnostic only and do not guarantee future performance.")
+    st.markdown("---")
+    st.markdown("#### 📜 LIVE TRADE HISTORY")
+    if not st.session_state.history: st.info("No signals have been generated yet.")
     else:
         for item in st.session_state.history[:30]:
-            st.markdown(
-                f"""
-**{item["asset"]}**
-
-Platform: **{item.get("provider", "BiQuote")}**
-
-Signal: **{item["signal"]}**
-
-Strength: **{item["strength"]}/5**
-
-Entry Price: `{item["price"]}`
-
-Result Price: `{item.get("result_price", "—")}`
-
-Timeframe: `{item["timeframe"]}`
-
-Signal Time: `{item["time"]}`
-
-Result Candle: `{item.get("result_candle_time", "—")}`
-
-Probability: **{item.get("probability", "—")}%**
-
-Status: **{item.get("status", "PENDING")}**
-
-TP Hit Time: **{item.get("tp_hit_elapsed", "—") if item.get("status") == "WIN" else "—"}**
-
----
-"""
-            )
-
+            st.markdown(f"**{item['asset']}**\n\nPlatform: **{item.get('provider','BiQuote')}**\n\nSignal: **{item['signal']}**\n\nStrength: **{item['strength']}/5**\n\nEntry Price: `{item['price']}`\n\nResult Price: `{item.get('result_price','—')}`\n\nTimeframe: `{item['timeframe']}`\n\nSignal Time: `{item['time']}`\n\nResult Candle: `{item.get('result_candle_time','—')}`\n\nProbability: **{item.get('probability','—')}%**\n\nStatus: **{item.get('status','PENDING')}**\n\nTP Hit Time: **{item.get('tp_hit_elapsed','—') if item.get('status')=='WIN' else '—'}**\n\n---")
     st.markdown("</div>", unsafe_allow_html=True)
 
 elif selected_page == "Learn":
