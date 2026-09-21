@@ -1061,9 +1061,36 @@ ASSETS, catalog_status = get_symbol_catalog()
 st.markdown("""
 <style>
 html,body,[data-testid="stAppViewContainer"]{background:radial-gradient(circle at 50% -10%,#173957 0%,#0a1c30 25%,#030914 62%,#020711 100%) !important}
-[data-testid="stHeader"]{background:transparent !important}
-[data-testid="stMainBlockContainer"]{max-width:500px !important;padding-top:0 !important;padding-left:12px !important;padding-right:12px !important}
-.block-container{padding-top:0 !important;padding-bottom:25px !important}
+[data-testid="stHeader"],
+header[data-testid="stHeader"]{
+    display:none !important;
+    height:0 !important;
+    min-height:0 !important;
+    padding:0 !important;
+    margin:0 !important;
+}
+
+[data-testid="stAppViewContainer"],
+[data-testid="stAppViewContainer"] > .main,
+[data-testid="stMain"],
+[data-testid="stAppViewBlockContainer"],
+[data-testid="stMainBlockContainer"]{
+    padding-top:0 !important;
+    margin-top:0 !important;
+}
+
+[data-testid="stMainBlockContainer"]{
+    max-width:500px !important;
+    padding-left:12px !important;
+    padding-right:12px !important;
+}
+
+.block-container,
+[data-testid="stAppViewContainer"] .main .block-container{
+    padding-top:0 !important;
+    margin-top:0 !important;
+    padding-bottom:25px !important;
+}
 .xiga-topbar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;width:100%;margin:0 0 12px;padding:0}.xiga-brand{text-align:center}.xiga-title{color:#fff;font-size:25px;font-weight:900;letter-spacing:1px}.xiga-title span{color:#28f3a5}.xiga-subtitle{margin-top:4px;color:#71859d;font-size:8px;letter-spacing:2px}.xiga-pro-wrap{display:flex;justify-content:flex-end}.xiga-pro{min-width:66px;padding:9px 8px;text-align:center;border-radius:12px;background:linear-gradient(135deg,#3d2d0d,#1f1809);border:1px solid #9b741d;color:#ffd76a;font-size:10px;font-weight:800}
 .xiga-card{background:linear-gradient(145deg,rgba(13,34,57,.96),rgba(5,16,29,.97));border:1px solid rgba(32,91,132,.72);border-radius:20px;box-shadow:0 18px 45px rgba(0,0,0,.32),inset 0 1px rgba(255,255,255,.035);padding:12px;margin-bottom:12px}
 div[data-testid="stSelectbox"] label{color:#7d93aa !important;font-size:8px !important;letter-spacing:1.4px !important;text-transform:uppercase !important}div[data-baseweb="select"]>div{background:linear-gradient(145deg,rgba(9,39,64,.98),rgba(7,25,43,.98)) !important;border:1px solid #185276 !important;color:white !important;border-radius:12px !important}div[data-baseweb="select"] span{color:white !important}.xiga-market-status{color:#29f4a5;font-size:7px;margin-top:3px}
