@@ -71,7 +71,92 @@ def get_secret(name):
         return str(st.secrets[name]).strip()
     except Exception:
         return ""
+# ==============================
+# XIGA PRO SUBSCRIPTION ACCESS
+# ==============================
 
+SUPABASE_URL = get_secret("SUPABASE_URL")
+SUPABASE_PUBLISHABLE_KEY = get_secret("SUPABASE_PUBLISHABLE_KEY")
+XIGA_FUNCTION_URL = f"{SUPABASE_URL}/functions/v1/xiga-request-activation-key"
+
+
+def xiga_subscription_login():
+    if st.session_state.get("xiga_access_token"):
+        token = st.session_state["xiga_access_token"]
+
+        try:
+            response = requests.post(
+                XIGA_FUNCTION_URL,
+                headers={
+                    "apikey": SUPABASE_PUBLISHABLE_KEY,
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json={"action": "status"},
+                timeout=15,
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+
+                if data.get("active"):
+                    return True
+
+                st.error("Your XIGA PRO subscription is not active.")
+                st.info("Please activate or renew your subscription.")
+                if st.button("LOG OUT"):
+                    st.session_state.pop("xiga_access_token", None)
+                    st.rerun()
+                st.stop()
+
+            st.error("Unable to verify your XIGA PRO subscription.")
+            st.stop()
+
+        except Exception:
+            st.error("Unable to connect to XIGA PRO subscription service.")
+            st.stop()
+
+    st.markdown("## XIGA PRO SECURE ACCESS")
+    st.caption("Sign in with your XIGA PRO account to continue.")
+
+    with st.form("xiga_pro_login"):
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+        login = st.form_submit_button("LOGIN")
+
+    if login:
+        if not email or not password:
+            st.error("Please enter your email and password.")
+            st.stop()
+
+        try:
+            response = requests.post(
+                f"{SUPABASE_URL}/auth/v1/token?grant_type=password",
+                headers={
+                    "apikey": SUPABASE_PUBLISHABLE_KEY,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "email": email.strip(),
+                    "password": password,
+                },
+                timeout=15,
+            )
+
+            if response.status_code != 200:
+                st.error("Invalid email or password.")
+                st.stop()
+
+            data = response.json()
+            st.session_state["xiga_access_token"] = data["access_token"]
+            st.rerun()
+
+        except Exception:
+            st.error("Unable to connect to XIGA account service.")
+            st.stop()
+
+
+xiga_subscription_login()
 # Market data providers. Public read-only market data is used; no trading API keys are needed.
 BIQUOTE_BASE = "https://biquote.io/api"
 BINANCE_BASE = "https://data-api.binance.vision"
