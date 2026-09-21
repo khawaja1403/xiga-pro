@@ -1125,29 +1125,102 @@ def seconds_until(iso_value):
 
 def resolve_trade_if_ready():
     pending = st.session_state.get("trade_pending")
-    if not pending or seconds_until(pending.get("complete_at")) > 0: return
-    # At expiry, bypass the normal short cache so the result uses the latest
-    # available market price/candle rather than an older cached value.
-    tick, status = get_latest_tick(pending["provider"], pending["symbol"], fresh=datetime.now(timezone.utc).replace(microsecond=0).isoformat())
-    if tick:
-        result_price = float(tick["price"])
-    else:
-        candles, candle_status = get_candles(pending["provider"], pending["symbol"], TIMEFRAMES[pending["timeframe"]])
-        if not candles:
-            pending["state"] = "RESULT ERROR"; pending["error"] = f"{status}; {candle_status}"; return
-        closed = completed_candles(candles, TIMEFRAMES[pending["timeframe"]])
-        if not closed:
-            pending["state"] = "RESULT ERROR"; pending["error"] = f"{status}; NO CLOSED RESULT CANDLE"; return
-        result_price = float(closed[-1]["close"])
-    outcome = calculate_outcome(pending["signal"], pending["entry_price"], result_price)
+    if not pending:
+        return
+
+    # Check TP on every 1-second fragment refresh.  STOP LOSS is display-only.
+    if not pending.get("tp_hit_at"):
+        tick, _status = get_latest_tick(
+            pending["provider"],
+            pending["symbol"],
+            fresh=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        )
+        if tick:
+            live_price = float(tick["price"])
+            target = float(pending["take_profit"])
+            signal = pending["signal"]
+            tp_hit = live_price >= target if signal == "CALL" else live_price <= target
+
+            if tp_hit:
+                started = parse_candle_time(pending.get("started_at"))
+                if started is None:
+                    started = datetime.now(timezone.utc)
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+
+                hit_time = datetime.now(timezone.utc)
+                elapsed_seconds = max(0, int((hit_time - started).total_seconds()))
+                max_seconds = 60 if pending.get("timeframe") == "1 MIN" else 300
+                elapsed_seconds = min(elapsed_seconds, max_seconds)
+                hit_minutes, hit_secs = divmod(elapsed_seconds, 60)
+
+                pending["tp_hit_at"] = hit_time.isoformat()
+                pending["tp_hit_second"] = elapsed_seconds
+                pending["tp_hit_minute"] = hit_minutes
+                pending["tp_hit_elapsed"] = f"{hit_minutes}m {hit_secs}s"
+                pending["tp_hit_price"] = live_price
+                pending["state"] = "TP HIT"
+
+                for item in st.session_state.history:
+                    if item.get("id") == pending.get("id"):
+                        item["tp_hit_second"] = elapsed_seconds
+                        item["tp_hit_minute"] = hit_minutes
+                        item["tp_hit_elapsed"] = f"{hit_minutes}m {hit_secs}s"
+                        item["tp_hit_price"] = live_price
+                        break
+
+    # Keep the trade window running until expiry. TP hit at any point = WIN.
+    if seconds_until(pending.get("complete_at")) > 0:
+        return
+
+    result_price = pending.get("tp_hit_price")
+    if result_price is None:
+        tick, _status = get_latest_tick(
+            pending["provider"],
+            pending["symbol"],
+            fresh=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        )
+        result_price = float(tick["price"]) if tick else float(pending["entry_price"])
+
+    outcome = "WIN" if pending.get("tp_hit_at") else "LOSS"
     checked = datetime.now(ZoneInfo("Asia/Karachi")).strftime("%Y-%m-%d %H:%M:%S PKT")
+
     for item in st.session_state.history:
         if item.get("id") == pending.get("id"):
-            item["status"] = outcome; item["result_price"] = result_price; item["checked_at"] = checked; break
+            item["status"] = outcome
+            item["result_price"] = result_price
+            item["checked_at"] = checked
+            break
+
     st.session_state.result["status"] = outcome
     st.session_state.result["result_price"] = result_price
     st.session_state.result["checked_at"] = checked
-    st.session_state.result["description"] = f"Individual signal result: {outcome}. Entry {pending['entry_price']:.6g} → result {result_price:.6g}."
+
+    if outcome == "WIN":
+        hit_seconds = int(pending.get("tp_hit_second", 0))
+        hit_minutes, hit_secs = divmod(hit_seconds, 60)
+        elapsed_text = f"{hit_minutes}m {hit_secs}s"
+        hit_price = pending.get("tp_hit_price", result_price)
+
+        # Store the exact elapsed TP-hit time for the WIN box.
+        st.session_state.result["tp_hit_second"] = hit_seconds
+        st.session_state.result["tp_hit_minute"] = hit_minutes
+        st.session_state.result["tp_hit_elapsed"] = elapsed_text
+        st.session_state.result["tp_hit_price"] = hit_price
+        st.session_state.result["description"] = (
+            f"TAKE PROFIT HIT at {elapsed_text}. "
+            f"TP {pending['take_profit']:.8g} reached at {hit_price:.8g}."
+        )
+    else:
+        st.session_state.result["tp_hit_second"] = None
+        st.session_state.result["tp_hit_minute"] = None
+        st.session_state.result["tp_hit_elapsed"] = None
+        st.session_state.result["tp_hit_price"] = None
+        st.session_state.result["description"] = (
+            f"TAKE PROFIT was not reached during the "
+            f"{1 if pending.get('timeframe') == '1 MIN' else 5}-minute trade window."
+        )
+
     st.session_state.trade_pending = None
     update_win_loss_totals()
 
@@ -1265,7 +1338,12 @@ if selected_page == "Trade":
             ai_title = "SIGNAL READY • TRADE WINDOW"
         elif result.get("status") in ("WIN", "LOSS", "DRAW"):
             win_display = result.get("status")
-            win_status = "● INDIVIDUAL SIGNAL RESULT"
+            if result.get("status") == "WIN" and result.get("tp_hit_elapsed"):
+                win_status = f"● TAKE PROFIT HIT AT {result.get('tp_hit_elapsed')}"
+            elif result.get("status") == "LOSS":
+                win_status = "● TAKE PROFIT NOT REACHED"
+            else:
+                win_status = "● INDIVIDUAL SIGNAL RESULT"
             ai_title = "TRADE WINDOW COMPLETE"
         elif result.get("success") and result.get("signal") in ("CALL", "PUT"):
             win_display = f'{int(result.get("probability", 50))}%'
@@ -1407,6 +1485,8 @@ Result Candle: `{item.get("result_candle_time", "—")}`
 Probability: **{item.get("probability", "—")}%**
 
 Status: **{item.get("status", "PENDING")}**
+
+TP Hit Time: **{item.get("tp_hit_elapsed", "—") if item.get("status") == "WIN" else "—"}**
 
 ---
 """
