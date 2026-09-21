@@ -1,3 +1,5 @@
 streamlit
 requests
-streamlit-cookies-manager-v2
+extra-streamlit-components==0.1.81
+cryptography
+streamlit-js==1.0.8
