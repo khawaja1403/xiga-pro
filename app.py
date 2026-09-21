@@ -1,7 +1,7 @@
 
 import streamlit as st
 import requests
-import streamlit.components.v1 as components
+from streamlit_js import st_js_blocking
 import extra_streamlit_components as stx
 import base64
 import hashlib
@@ -24,7 +24,11 @@ if not COOKIE_PASSWORD:
 
 _COOKIE_FERNET_KEY = base64.urlsafe_b64encode(hashlib.sha256(COOKIE_PASSWORD.encode()).digest())
 COOKIE_FERNET = Fernet(_COOKIE_FERNET_KEY)
-COOKIE_MANAGER = stx.CookieManager(key="xiga-pro-auth")
+@st.cache_resource
+def get_cookie_manager():
+    return stx.CookieManager(key="xiga-pro-auth")
+
+COOKIE_MANAGER = get_cookie_manager()
 COOKIE_NAME = "xiga_refresh"
 COOKIE_DAYS = 365
 
@@ -41,12 +45,15 @@ def set_persistent_refresh_cookie(refresh_token):
     )
 
 def get_persistent_refresh_cookie():
-    value = COOKIE_MANAGER.get(COOKIE_NAME)
-    if not value:
-        return ""
     try:
-        return COOKIE_FERNET.decrypt(value.encode()).decode()
-    except (InvalidToken, ValueError, TypeError):
+        cookies = COOKIE_MANAGER.get_all(key="xiga_refresh_cookie_read")
+        if not cookies:
+            return ""
+        value = cookies.get(COOKIE_NAME)
+        if not value:
+            return ""
+        return COOKIE_FERNET.decrypt(str(value).encode()).decode()
+    except (InvalidToken, ValueError, TypeError, AttributeError):
         return ""
 
 def delete_persistent_refresh_cookie():
@@ -142,6 +149,7 @@ def clear_session():
     for key in ("xiga_access_token", "xiga_refresh_token", "xiga_email", "xiga_status", "xiga_subscription_active"):
         st.session_state.pop(key, None)
     delete_persistent_refresh_cookie()
+    st.session_state.pop("xiga_cookie_checked", None)
 
 def refresh_access_token(refresh_token):
     try:
@@ -161,8 +169,18 @@ def refresh_access_token(refresh_token):
 def ensure_session_from_cookie():
     if st.session_state.get("xiga_access_token"):
         return True
+
     refresh_token = get_persistent_refresh_cookie()
-    return bool(refresh_token and refresh_access_token(refresh_token))
+    if refresh_token:
+        return bool(refresh_access_token(refresh_token))
+
+    # Cookie components load asynchronously. Give the browser one rerun to
+    # return the persistent cookie before displaying the login screen.
+    if not st.session_state.get("xiga_cookie_checked"):
+        st.session_state["xiga_cookie_checked"] = True
+        st.stop()
+
+    return False
 
 def get_subscription_status():
     token = st.session_state.get("xiga_access_token")
@@ -207,41 +225,36 @@ def call_xiga_function(action, key=None):
     except requests.RequestException:
         return 0, {"error": "Unable to connect to XIGA subscription service."}
 
-def render_password_recovery_helper():
-    # Convert the Supabase recovery URL hash into temporary query parameters so
-    # Streamlit Python can display the reset form. The recovery values are removed
-    # from the URL immediately after the password is changed.
-    components.html(
-        """
-<script>
-(function() {
-  const hash = window.parent.location.hash || window.location.hash || "";
-  if (!hash.includes("type=recovery") || !hash.includes("access_token=")) return;
-  const params = new URLSearchParams(hash.replace(/^#/, ""));
-  const accessToken = params.get("access_token");
-  const refreshToken = params.get("refresh_token") || "";
-  if (!accessToken) return;
-  const target = new URL(window.parent.location.href);
-  target.hash = "";
-  target.searchParams.set("xiga_recovery", "1");
-  target.searchParams.set("xiga_access", accessToken);
-  target.searchParams.set("xiga_refresh", refreshToken);
-  window.parent.location.replace(target.toString());
-})();
-</script>
-""",
-        height=1,
-    )
+def get_browser_recovery_hash():
+    """Read the Supabase recovery hash from the actual app page."""
+    try:
+        value = st_js_blocking(
+            code="return window.parent.location.hash || window.location.hash || '';"
+        )
+        return value or ""
+    except Exception:
+        return ""
 
 
 def handle_password_recovery():
-    params = st.query_params
-    if params.get("xiga_recovery") == "1" and not st.session_state.get("xiga_recovery_token"):
-        st.session_state["xiga_recovery_token"] = params.get("xiga_access", "")
-        st.session_state["xiga_recovery_refresh"] = params.get("xiga_refresh", "")
-        for key in ("xiga_recovery", "xiga_access", "xiga_refresh"):
-            params.pop(key, None)
-        st.rerun()
+    # Supabase's recovery flow returns the session in the URL fragment.
+    # Streamlit Python cannot read fragments directly, so the small JS component
+    # reads the fragment and hands it back to Python.
+    recovery_hash = get_browser_recovery_hash()
+    if recovery_hash and "type=recovery" in recovery_hash and "access_token=" in recovery_hash:
+        from urllib.parse import parse_qs
+        values = parse_qs(recovery_hash.lstrip("#"), keep_blank_values=True)
+        access_token = values.get("access_token", [""])[0]
+        refresh_token = values.get("refresh_token", [""])[0]
+        if access_token:
+            st.session_state["xiga_recovery_token"] = access_token
+            st.session_state["xiga_recovery_refresh"] = refresh_token
+            # Remove the recovery fragment from the visible URL.
+            try:
+                st_js_blocking(code="window.parent.history.replaceState({}, document.title, window.parent.location.pathname + window.parent.location.search); return true;")
+            except Exception:
+                pass
+            st.rerun()
 
     access_token = st.session_state.get("xiga_recovery_token", "")
     refresh_token = st.session_state.get("xiga_recovery_refresh", "")
@@ -295,7 +308,6 @@ def handle_password_recovery():
     return True
 
 def xiga_subscription_login():
-    render_password_recovery_helper()
     if not SUPABASE_URL or not SUPABASE_PUBLISHABLE_KEY:
         st.error("XIGA PRO subscription settings are missing.")
         st.stop()
@@ -1126,8 +1138,8 @@ st.markdown("""
 <style>
 html,body,[data-testid="stAppViewContainer"]{background:radial-gradient(circle at 50% -10%,#173957 0%,#0a1c30 25%,#030914 62%,#020711 100%) !important}
 [data-testid="stHeader"]{background:transparent !important}
-[data-testid="stMainBlockContainer"]{max-width:500px !important;padding-top:12px !important;padding-left:12px !important;padding-right:12px !important}
-.block-container{padding-bottom:25px !important}
+[data-testid="stMainBlockContainer"]{max-width:500px !important;padding-top:0 !important;padding-left:12px !important;padding-right:12px !important}.stElementContainer:has(iframe){display:none !important}
+.block-container{padding-top:0 !important;padding-bottom:25px !important}
 .xiga-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.xiga-menu{width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;background:rgba(11,30,49,.88);border:1px solid #214967;color:#dceeff;font-size:21px}.xiga-brand{text-align:center;flex:1}.xiga-title{color:#fff;font-size:25px;font-weight:900;letter-spacing:1px}.xiga-title span{color:#28f3a5}.xiga-subtitle{margin-top:4px;color:#71859d;font-size:8px;letter-spacing:2px}.xiga-pro{min-width:66px;padding:9px 8px;text-align:center;border-radius:12px;background:linear-gradient(135deg,#3d2d0d,#1f1809);border:1px solid #9b741d;color:#ffd76a;font-size:10px;font-weight:800}
 .xiga-card{background:linear-gradient(145deg,rgba(13,34,57,.96),rgba(5,16,29,.97));border:1px solid rgba(32,91,132,.72);border-radius:20px;box-shadow:0 18px 45px rgba(0,0,0,.32),inset 0 1px rgba(255,255,255,.035);padding:12px;margin-bottom:12px}
 div[data-testid="stSelectbox"] label{color:#7d93aa !important;font-size:8px !important;letter-spacing:1.4px !important;text-transform:uppercase !important}div[data-baseweb="select"]>div{background:linear-gradient(145deg,rgba(9,39,64,.98),rgba(7,25,43,.98)) !important;border:1px solid #185276 !important;color:white !important;border-radius:12px !important}div[data-baseweb="select"] span{color:white !important}.xiga-market-status{color:#29f4a5;font-size:7px;margin-top:3px}
@@ -1136,6 +1148,7 @@ div[data-testid="stSelectbox"] label{color:#7d93aa !important;font-size:8px !imp
 .stButton>button{width:100%;height:55px;border-radius:16px;border:1px solid #5affaf;background:linear-gradient(100deg,#13ca87,#38f5ad);color:#03130d;font-size:14px;font-weight:900;box-shadow:0 8px 28px rgba(37,245,166,.20)}.stButton>button:hover{border-color:#5affaf;color:#03130d}.xiga-footer{text-align:center;margin-top:9px;color:#4f647a;font-size:7px;letter-spacing:.5px}
 div[role="radiogroup"]{display:flex !important;justify-content:center !important;gap:4px !important;flex-wrap:nowrap !important;margin:0 0 12px !important}div[role="radiogroup"] label{color:#8ca1b7 !important;font-size:10px !important;padding:5px 7px !important;white-space:nowrap !important}div[role="radiogroup"] label:has(input:checked){color:#29f5a6 !important}
 .xiga-menu-button button{width:42px !important;height:42px !important;min-height:42px !important;padding:0 !important;border-radius:13px !important;background:rgba(11,30,49,.88) !important;border:1px solid #214967 !important;color:#dceeff !important;font-size:21px !important;box-shadow:none !important}.xiga-account-card{background:linear-gradient(145deg,rgba(13,34,57,.98),rgba(5,16,29,.99));border:1px solid rgba(32,91,132,.72);border-radius:18px;padding:14px;margin-bottom:12px}.xiga-account-label{color:#7d93aa;font-size:8px;letter-spacing:1.4px;text-transform:uppercase}.xiga-account-value{color:#fff;font-size:12px;font-weight:800;margin-top:4px}.xiga-levels{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:12px}.xiga-level{background:linear-gradient(145deg,rgba(7,29,49,.98),rgba(5,17,30,.98));border:1px solid #17557d;border-radius:12px;padding:9px 5px;text-align:center}.xiga-level-label{color:#8296ad;font-size:7px;text-transform:uppercase}.xiga-level-value{color:#29f5a6;font-size:11px;font-weight:900;margin-top:4px}.xiga-trade-levels{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin:14px 0 2px;padding:10px 6px;border-radius:15px;background:linear-gradient(145deg,rgba(7,29,49,.98),rgba(5,17,30,.98));border:1px solid #17557d}.xiga-trade-level{text-align:center;min-width:0}.xiga-trade-label{color:#8296ad;font-size:7px;text-transform:uppercase;letter-spacing:.4px}.xiga-trade-value{color:#fff;font-size:10px;font-weight:900;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.xiga-trade-value.entry{color:#29f5a6}.xiga-trade-value.tp{color:#7ed8ff}.xiga-trade-value.sl{color:#ff718e}
+.xiga-top-spacer{display:none !important}.xiga-brand{text-align:center;width:100%;padding-top:0}.xiga-menu-button{display:flex;justify-content:flex-start;align-items:center}.xiga-menu-button button{width:42px !important;height:42px !important;min-height:42px !important;padding:0 !important;margin:0 !important;border-radius:13px !important;background:rgba(11,30,49,.88) !important;border:1px solid #214967 !important;color:#dceeff !important;font-size:21px !important;line-height:42px !important;box-shadow:none !important}.xiga-menu-button button:hover{background:rgba(16,43,67,.96) !important;border-color:#2d668c !important;color:#fff !important}.xiga-pro-wrap{display:flex;justify-content:flex-end;align-items:center}.xiga-pro{width:66px;min-width:66px;box-sizing:border-box;padding:9px 8px;text-align:center;border-radius:12px;background:linear-gradient(135deg,#3d2d0d,#1f1809);border:1px solid #9b741d;color:#ffd76a;font-size:10px;font-weight:800}.xiga-top-row{margin-top:0 !important;margin-bottom:8px !important}
 header[data-testid="stHeader"] {
     display: none !important;
 }
@@ -1148,7 +1161,7 @@ footer {
 </style>
 """, unsafe_allow_html=True)
 
-top_left, top_center, top_right = st.columns([0.18, 0.64, 0.18])
+top_left, top_center, top_right = st.columns([0.18, 0.64, 0.18], vertical_alignment="center")
 with top_left:
     st.markdown('<div class="xiga-menu-button">', unsafe_allow_html=True)
     menu_clicked = st.button("☰", key="account_menu_button")
@@ -1156,7 +1169,7 @@ with top_left:
 with top_center:
     st.markdown('<div class="xiga-brand"><div class="xiga-title"><span>▰</span> XIGA</div><div class="xiga-subtitle">TRADING SIGNAL BOT</div></div>', unsafe_allow_html=True)
 with top_right:
-    st.markdown('<div class="xiga-pro">👑 PRO</div>', unsafe_allow_html=True)
+    st.markdown('<div class="xiga-pro-wrap"><div class="xiga-pro">👑 PRO</div></div>', unsafe_allow_html=True)
 
 if menu_clicked:
     st.session_state["show_account_menu"] = not st.session_state.get("show_account_menu", False)
