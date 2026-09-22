@@ -90,26 +90,12 @@ ASSETS_FALLBACK = {
     "Indices": {"S&P 500 (US500)":"US500","NASDAQ 100 (USTEC)":"USTEC","Dow Jones (US30)":"US30","DAX (DE40)":"DE40","FTSE 100 (UK100)":"UK100","Nikkei 225 (JP225)":"JP225"},
 }
 
-EXCHANGE_ASSETS = {
-    "Binance": {
-        "Bitcoin (BTC/USDT)":"BTCUSDT", "Ethereum (ETH/USDT)":"ETHUSDT", "Solana (SOL/USDT)":"SOLUSDT",
-        "BNB (BNB/USDT)":"BNBUSDT", "XRP (XRP/USDT)":"XRPUSDT", "Dogecoin (DOGE/USDT)":"DOGEUSDT",
-        "Cardano (ADA/USDT)":"ADAUSDT", "Chainlink (LINK/USDT)":"LINKUSDT", "Avalanche (AVAX/USDT)":"AVAXUSDT",
-        "Tron (TRX/USDT)":"TRXUSDT", "Sui (SUI/USDT)":"SUIUSDT", "Polkadot (DOT/USDT)":"DOTUSDT",
-    },
-    "Bitget": {
-        "Bitcoin (BTC/USDT)":"BTCUSDT", "Ethereum (ETH/USDT)":"ETHUSDT", "Solana (SOL/USDT)":"SOLUSDT",
-        "BNB (BNB/USDT)":"BNBUSDT", "XRP (XRP/USDT)":"XRPUSDT", "Dogecoin (DOGE/USDT)":"DOGEUSDT",
-        "Cardano (ADA/USDT)":"ADAUSDT", "Chainlink (LINK/USDT)":"LINKUSDT", "Avalanche (AVAX/USDT)":"AVAXUSDT",
-        "Sui (SUI/USDT)":"SUIUSDT", "Polkadot (DOT/USDT)":"DOTUSDT", "Litecoin (LTC/USDT)":"LTCUSDT",
-    },
-    "OKX": {
-        "Bitcoin (BTC/USDT)":"BTC-USDT", "Ethereum (ETH/USDT)":"ETH-USDT", "Solana (SOL/USDT)":"SOL-USDT",
-        "BNB (BNB/USDT)":"BNB-USDT", "XRP (XRP/USDT)":"XRP-USDT", "Dogecoin (DOGE/USDT)":"DOGE-USDT",
-        "Cardano (ADA/USDT)":"ADA-USDT", "Chainlink (LINK/USDT)":"LINK-USDT", "Avalanche (AVAX/USDT)":"AVAX-USDT",
-        "Sui (SUI/USDT)":"SUI-USDT", "Polkadot (DOT/USDT)":"DOT-USDT", "Litecoin (LTC/USDT)":"LTC-USDT",
-    },
+EXCHANGE_ASSETS_FALLBACK = {
+    "Binance": {"Bitcoin (BTC/USDT)":"BTCUSDT","Ethereum (ETH/USDT)":"ETHUSDT","Solana (SOL/USDT)":"SOLUSDT","BNB (BNB/USDT)":"BNBUSDT","XRP (XRP/USDT)":"XRPUSDT","Dogecoin (DOGE/USDT)":"DOGEUSDT","Cardano (ADA/USDT)":"ADAUSDT","Chainlink (LINK/USDT)":"LINKUSDT","Avalanche (AVAX/USDT)":"AVAXUSDT","Tron (TRX/USDT)":"TRXUSDT","Sui (SUI/USDT)":"SUIUSDT","Polkadot (DOT/USDT)":"DOTUSDT","Litecoin (LTC/USDT)":"LTCUSDT","Shiba Inu (SHIB/USDT)":"SHIBUSDT","Pepe (PEPE/USDT)":"PEPEUSDT"},
+    "Bitget": {"Bitcoin (BTC/USDT)":"BTCUSDT","Ethereum (ETH/USDT)":"ETHUSDT","Solana (SOL/USDT)":"SOLUSDT","BNB (BNB/USDT)":"BNBUSDT","XRP (XRP/USDT)":"XRPUSDT","Dogecoin (DOGE/USDT)":"DOGEUSDT","Cardano (ADA/USDT)":"ADAUSDT","Chainlink (LINK/USDT)":"LINKUSDT","Avalanche (AVAX/USDT)":"AVAXUSDT","Sui (SUI/USDT)":"SUIUSDT","Polkadot (DOT/USDT)":"DOTUSDT","Litecoin (LTC/USDT)":"LTCUSDT","Shiba Inu (SHIB/USDT)":"SHIBUSDT","Pepe (PEPE/USDT)":"PEPEUSDT"},
+    "OKX": {"Bitcoin (BTC/USDT)":"BTC-USDT","Ethereum (ETH/USDT)":"ETH-USDT","Solana (SOL/USDT)":"SOL-USDT","BNB (BNB/USDT)":"BNB-USDT","XRP (XRP/USDT)":"XRP-USDT","Dogecoin (DOGE/USDT)":"DOGE-USDT","Cardano (ADA/USDT)":"ADA-USDT","Chainlink (LINK/USDT)":"LINK-USDT","Avalanche (AVAX/USDT)":"AVAX-USDT","Sui (SUI/USDT)":"SUI-USDT","Polkadot (DOT/USDT)":"DOT-USDT","Litecoin (LTC/USDT)":"LTC-USDT","Shiba Inu (SHIB/USDT)":"SHIB-USDT","Pepe (PEPE/USDT)":"PEPE-USDT"},
 }
+EXCHANGE_ASSETS = {k: dict(v) for k,v in EXCHANGE_ASSETS_FALLBACK.items()}
 
 EXCHANGE_PROVIDERS = ["BiQuote", "Binance", "Bitget", "OKX"]
 BACKTEST_PROVIDERS = ["Binance", "Bitget", "OKX"]  # BiQuote remains live-only because its historical depth is not reliable enough for 5k/10k validation.
@@ -406,6 +392,44 @@ def get_symbol_catalog():
     except Exception as exc:
         return ASSETS_FALLBACK, f"CATALOG ERROR • USING FALLBACK: {exc}"
 
+@st.cache_data(ttl=900, show_spinner=False)
+def get_spot_exchange_assets(provider):
+    fallback = EXCHANGE_ASSETS_FALLBACK.get(provider, {})
+    try:
+        pairs = {}
+        if provider == "Binance":
+            r = requests.get(f"{BINANCE_BASE}/api/v3/exchangeInfo", timeout=20)
+            if r.status_code != 200: return fallback, f"BINANCE SPOT CATALOG ERROR {r.status_code}"
+            for x in r.json().get("symbols", []):
+                if x.get("status") == "TRADING" and x.get("quoteAsset") == "USDT" and x.get("isSpotTradingAllowed", True):
+                    base, sym = str(x.get("baseAsset") or ""), str(x.get("symbol") or "")
+                    if base and sym: pairs[f"{base} (USDT)"] = sym
+        elif provider == "Bitget":
+            r = requests.get(f"{BITGET_BASE}/api/v3/market/instruments", params={"category":"SPOT"}, timeout=20)
+            if r.status_code != 200: return fallback, f"BITGET SPOT CATALOG ERROR {r.status_code}"
+            for x in r.json().get("data", []):
+                if str(x.get("status","")).lower() == "online" and str(x.get("quoteCoin","")).upper() == "USDT":
+                    base, sym = str(x.get("baseCoin") or ""), str(x.get("symbol") or "")
+                    if base and sym: pairs[f"{base} (USDT)"] = sym
+        elif provider == "OKX":
+            r = requests.get(f"{OKX_BASE}/api/v5/public/instruments", params={"instType":"SPOT"}, timeout=20)
+            if r.status_code != 200: return fallback, f"OKX SPOT CATALOG ERROR {r.status_code}"
+            raw = r.json()
+            if str(raw.get("code","0")) != "0": return fallback, f"OKX SPOT CATALOG ERROR {raw.get('msg','UNKNOWN')}"
+            for x in raw.get("data", []):
+                if str(x.get("state","")).lower() == "live" and str(x.get("quoteCcy","")).upper() == "USDT":
+                    base, sym = str(x.get("baseCcy") or ""), str(x.get("instId") or "")
+                    if base and sym: pairs[f"{base} (USDT)"] = sym
+        if not pairs: return fallback, f"{provider.upper()} SPOT CATALOG EMPTY • USING FALLBACK"
+        pairs = dict(sorted(pairs.items(), key=lambda kv: kv[0].lower()))
+        return pairs, f"{provider.upper()} SPOT • {len(pairs)} USDT PAIRS"
+    except requests.exceptions.Timeout:
+        return fallback, f"{provider.upper()} SPOT CATALOG TIMEOUT • USING FALLBACK"
+    except requests.exceptions.RequestException:
+        return fallback, f"{provider.upper()} SPOT CATALOG NETWORK ERROR • USING FALLBACK"
+    except Exception as exc:
+        return fallback, f"{provider.upper()} SPOT CATALOG ERROR • USING FALLBACK: {exc}"
+
 def _parse_exchange_candles(provider, raw, resolution):
     candles=[]
     try:
@@ -678,7 +702,7 @@ def get_latest_tick(provider, provider_symbol, fresh=False):
             if r.status_code!=200: return None,f"BITGET TICK ERROR {r.status_code}"
             data=r.json().get("data",[])
             if not data: return None,"BITGET NO LIVE PRICE"
-            return {"price":float(data[0].get("lastPr") or data[0].get("last") or data[0].get("bidPr"))},"BITGET LIVE PRICE CONNECTED"
+            return {"price":float(data[0].get("lastPrice") or data[0].get("lastPr") or data[0].get("last") or data[0].get("bidPr"))},"BITGET LIVE PRICE CONNECTED"
         if provider == "OKX":
             r=requests.get(f"{OKX_BASE}/api/v5/market/ticker",params={"instId":provider_symbol},timeout=10)
             if r.status_code!=200: return None,f"OKX TICK ERROR {r.status_code}"
@@ -1649,6 +1673,19 @@ footer,#MainMenu{display:none !important}section[data-testid="stSidebar"]{displa
 ''', unsafe_allow_html=True)
 
 
+st.markdown("""<style>
+/* Compact same-tab navigation: text tabs, not large button boxes. */
+.xiga-topnav{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin:2px 0 10px;border-bottom:1px solid #10334a}
+.xiga-topnav .stButton{margin:0!important}
+.xiga-topnav .stButton>button{background:transparent!important;border:0!important;box-shadow:none!important;border-radius:0!important;height:34px!important;min-height:34px!important;padding:0 2px!important;color:#7891a5!important;font-size:9px!important;font-weight:900!important;letter-spacing:.6px!important}
+.xiga-topnav .stButton>button:hover{background:transparent!important;color:#dfffee!important;border:0!important;box-shadow:none!important}
+.xiga-topnav .stButton>button:focus{outline:none!important;box-shadow:none!important}
+.xiga-topnav .stButton>button[kind="primary"]{color:#29f5a6!important}
+@media(max-width:390px){.xiga-topnav .stButton>button{font-size:8px!important;letter-spacing:.3px!important}}
+
+</style>
+""", unsafe_allow_html=True)
+
 def render_app_header(active_page):
     provider = st.session_state.get("provider", "Binance")
     if provider not in EXCHANGE_PROVIDERS:
@@ -1699,8 +1736,8 @@ def dashboard_page():
         asset_map = ASSETS.get(category) or {}
     else:
         with c2:
-            st.selectbox("Market", ["Crypto / USDT"], key="exchange_market_display", disabled=True)
-        asset_map = EXCHANGE_ASSETS[provider]
+            st.selectbox("Market", ["Crypto / USDT • SPOT"], key="exchange_market_display", disabled=True)
+        asset_map, exchange_catalog_status = get_spot_exchange_assets(provider)
     with c3:
         tf_default = st.session_state.get("timeframe", "1 MIN")
         timeframe = st.selectbox("Timeframe", list(TIMEFRAMES.keys()), index=list(TIMEFRAMES.keys()).index(tf_default) if tf_default in TIMEFRAMES else 0, key="timeframe", disabled=controls_disabled)
@@ -1712,7 +1749,7 @@ def dashboard_page():
     current_asset = st.session_state.get("asset", asset_names[0])
     if current_asset not in asset_names: current_asset = asset_names[0]
     display_asset = st.selectbox("Asset", asset_names, index=asset_names.index(current_asset), key="asset", disabled=controls_disabled)
-    st.markdown(f'<div class="xiga-market-ready">● LIVE MARKET READY • {provider} • {catalog_status if provider == "BiQuote" else "PUBLIC API"}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="xiga-market-ready">● LIVE MARKET READY • {provider} • {catalog_status if provider == "BiQuote" else exchange_catalog_status}</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
     symbol = asset_map[display_asset]
@@ -1802,7 +1839,7 @@ def backtest_page():
     if provider=="BiQuote":
         category=st.selectbox("Market",list(ASSETS.keys()),key="backtest_category"); asset_map=ASSETS.get(category) or {}
     else:
-        st.selectbox("Market",["Crypto / USDT"],disabled=True,key=f"backtest_market_{provider}"); asset_map=EXCHANGE_ASSETS[provider]
+        st.selectbox("Market",["Crypto / USDT • SPOT"],disabled=True,key=f"backtest_market_{provider}"); asset_map, _ = get_spot_exchange_assets(provider)
     asset_names=list(asset_map.keys())
     if asset_names:
         asset=st.selectbox("Asset",asset_names,key="backtest_asset"); timeframe=st.selectbox("Timeframe",list(TIMEFRAMES.keys()),key="backtest_timeframe")
