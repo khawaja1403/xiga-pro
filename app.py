@@ -1665,7 +1665,7 @@ footer,#MainMenu{display:none !important}section[data-testid="stSidebar"]{displa
 .xiga-why{display:flex;gap:10px;align-items:center}.xiga-why-icon{width:35px;height:35px;border-radius:11px;background:#13280d;border:1px solid #657d20;display:flex;align-items:center;justify-content:center;font-size:18px}.xiga-why-title{color:#f0f8ff;font-weight:900;font-size:12px}.xiga-why-text{color:#8da2b5;font-size:9px;line-height:1.45;margin-top:3px}.xiga-tech-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}.xiga-tech{border:1px solid #104e70;border-radius:10px;background:#051827;padding:7px 4px;text-align:center}.xiga-tech b{display:block;color:#7790a5;font-size:7px}.xiga-tech span{display:block;color:#e9f6ff;font-size:11px;font-weight:900;margin-top:3px}
 .xiga-status-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.xiga-status-item{border:1px solid #0d5377;border-radius:12px;background:#041624;padding:9px;text-align:center}.xiga-status-label{font-size:7px;color:#8299ad;letter-spacing:.8px}.xiga-status-value{font-size:11px;font-weight:900;color:#edf8ff;margin-top:4px}.green{color:#20e7a0 !important}.red{color:#ff4052 !important}
 .stButton>button{min-height:50px !important;border-radius:15px !important;border:1px solid #5af7c1 !important;background:linear-gradient(100deg,#11cf8b,#2ff1ad) !important;color:#02130c !important;font-weight:950 !important;font-size:14px !important;box-shadow:0 0 22px rgba(32,231,160,.17) !important}.stButton>button:disabled{background:#0b3550 !important;color:#7391a5 !important;border-color:#1d5d80 !important;box-shadow:none !important}
-.xiga-analyze-wrap{margin-top:10px}.xiga-analyze-sub{text-align:center;color:#688298;font-size:8px;margin-top:5px}.xiga-topnav{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin:7px 0 8px;padding:0;border:0;background:transparent}.xiga-nav-link{position:relative;display:flex;align-items:center;justify-content:center;min-height:32px;padding:0 3px;color:#71889b !important;text-decoration:none !important;font-size:8px;font-weight:950;letter-spacing:.5px;white-space:nowrap;transition:color .15s ease}.xiga-nav-link:hover{color:#20e7a0 !important;text-decoration:none !important}.xiga-nav-link.active{color:#20e7a0 !important}.xiga-nav-link.active::after{content:"";position:absolute;left:24%;right:24%;bottom:0;height:2px;border-radius:4px;background:#20e7a0;box-shadow:0 0 8px rgba(32,231,160,.55)}.xiga-signal-circle{width:112px;height:112px;border-radius:50%;margin:12px auto 10px;display:flex;align-items:center;justify-content:center;border:3px solid currentColor;background:rgba(3,18,28,.94);box-shadow:0 0 28px currentColor}.xiga-signal-circle.buy{color:#20e7a0}.xiga-signal-circle.sell{color:#ff4052}.xiga-signal-circle.neutral{color:#9bb0c1}.xiga-signal-circle-inner{text-align:center}.xiga-signal-circle-icon{font-size:34px;font-weight:950;line-height:1}.xiga-signal-circle-text{font-size:12px;font-weight:950;letter-spacing:1px;margin-top:4px}
+.xiga-analyze-wrap{margin-top:10px}.xiga-analyze-sub{text-align:center;color:#688298;font-size:8px;margin-top:5px}.xiga-topnav{margin:7px 0 8px}.xiga-topnav .stRadio{margin:0 !important}.xiga-topnav div[role="radiogroup"]{display:grid !important;grid-template-columns:repeat(4,1fr) !important;gap:0 !important;width:100% !important;margin:0 !important}.xiga-topnav div[role="radiogroup"] label{position:relative !important;display:flex !important;align-items:center !important;justify-content:center !important;min-height:32px !important;padding:0 3px !important;margin:0 !important;color:#71889b !important;font-size:8px !important;font-weight:950 !important;letter-spacing:.5px !important;white-space:nowrap !important;cursor:pointer !important;background:transparent !important;border:0 !important;box-shadow:none !important}.xiga-topnav div[role="radiogroup"] label:hover{color:#20e7a0 !important}.xiga-topnav div[role="radiogroup"] label:has(input:checked){color:#20e7a0 !important}.xiga-topnav div[role="radiogroup"] label:has(input:checked)::after{content:"" !important;position:absolute !important;left:24% !important;right:24% !important;bottom:0 !important;height:2px !important;border-radius:4px !important;background:#20e7a0 !important;box-shadow:0 0 8px rgba(32,231,160,.55) !important}.xiga-topnav div[role="radiogroup"] label > div:first-child{display:none !important}.xiga-topnav div[role="radiogroup"] label p{font-size:8px !important;font-weight:950 !important;letter-spacing:.5px !important;margin:0 !important}.xiga-topnav [data-testid="stRadio"]{padding:0 !important}.xiga-signal-circle{width:112px;height:112px;border-radius:50%;margin:12px auto 10px;display:flex;align-items:center;justify-content:center;border:3px solid currentColor;background:rgba(3,18,28,.94);box-shadow:0 0 28px currentColor}.xiga-signal-circle.buy{color:#20e7a0}.xiga-signal-circle.sell{color:#ff4052}.xiga-signal-circle.neutral{color:#9bb0c1}.xiga-signal-circle-inner{text-align:center}.xiga-signal-circle-icon{font-size:34px;font-weight:950;line-height:1}.xiga-signal-circle-text{font-size:12px;font-weight:950;letter-spacing:1px;margin-top:4px}
 .xiga-backtest-grid,.xiga-stat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:7px;margin-top:10px}.xiga-stat-box{border:1px solid #0d5275;border-radius:12px;background:#041624;padding:10px;text-align:center}.xiga-stat-box b{display:block;font-size:7px;color:#8198aa}.xiga-stat-box span{display:block;font-size:17px;font-weight:950;color:#edf8ff;margin-top:4px}.xiga-history-item{border:1px solid #0d4e70;border-radius:13px;background:#041521;padding:10px;margin-top:7px}.xiga-history-top{display:flex;justify-content:space-between;font-size:11px;font-weight:900}.xiga-history-sub{font-size:8px;color:#8197aa;line-height:1.6;margin-top:4px}.xiga-history-result{margin-top:5px;font-size:8px;font-weight:900}.xiga-account-card{border:1px solid #0d5a80;border-radius:15px;background:#041624;padding:12px}.xiga-account-label{font-size:7px;color:#7e96aa;letter-spacing:1px}.xiga-account-value{font-size:13px;color:#f0f8ff;font-weight:900;margin-top:4px;word-break:break-all}.xiga-profile-levels{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}.xiga-profile-level{border:1px solid #0b4e70;border-radius:10px;padding:8px 4px;text-align:center}.xiga-profile-level b{display:block;color:#7891a4;font-size:7px}.xiga-profile-level span{display:block;color:#20e7a0;font-size:11px;font-weight:900;margin-top:4px}.xiga-footer{text-align:center;color:#4d687c;font-size:7px;letter-spacing:1px;margin:12px 0 4px}.xiga-muted{color:#8198aa;font-size:9px;line-height:1.5}.xiga-note{color:#7891a5;font-size:8px;line-height:1.5;margin-top:8px}
 @media(max-width:600px){[data-testid="stMainBlockContainer"]{padding-left:6px !important;padding-right:6px !important}.xiga-logo{font-size:21px}.xiga-direction{font-size:44px}.xiga-tech-grid{grid-template-columns:repeat(2,1fr)}.xiga-levels{gap:5px}.xiga-level-value{font-size:12px}.xiga-status-grid{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:390px){.xiga-direction{font-size:38px}.xiga-confidence-value{font-size:27px}.xiga-level-label{font-size:6px}.xiga-level-value{font-size:10px}.xiga-logo{font-size:19px}}
@@ -1693,15 +1693,21 @@ def render_app_header(active_page):
 
     st.markdown(f'''<div class="xiga-header"><div><div class="xiga-logo"><b>XI</b>GA PRO</div><div class="xiga-tag">TRADE SMARTER</div></div><div class="xiga-live-box"><span class="xiga-live-dot"></span><span class="xiga-live-text">LIVE MARKET</span><span class="xiga-live-sub">{provider} • PUBLIC DATA <span class="xiga-pro">♛ PRO</span></span></div></div>''', unsafe_allow_html=True)
 
-    # REAL TAB LINKS — no Streamlit buttons and no button widgets.
-    # Plain <a> links navigate in the SAME browser tab by default, while
-    # Streamlit keeps the same authenticated browser session/cookies.
+    # Compact tab navigation using a Streamlit radio widget, not buttons or links.
+    # This stays in the same browser tab and the same Streamlit session.
     pages = ("Dashboard", "Backtest", "History", "Profile")
-    links = []
-    for name in pages:
-        active = " active" if active_page == name else ""
-        links.append(f'<a class="xiga-nav-link{active}" href="?page={name}">{name.upper()}</a>')
-    st.markdown('<nav class="xiga-topnav" aria-label="XIGA navigation">' + ''.join(links) + '</nav>', unsafe_allow_html=True)
+    current_index = pages.index(active_page) if active_page in pages else 0
+    selected = st.radio(
+        "XIGA navigation",
+        pages,
+        index=current_index,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="xiga_tab_navigation",
+    )
+    if selected != st.session_state.get("page"):
+        st.session_state.page = selected
+        st.rerun()
 
 
 def dashboard_page():
@@ -1876,12 +1882,6 @@ def profile_page():
     st.markdown('<div class="xiga-footer">XIGA PRO • ACCOUNT & SUBSCRIPTION</div></div>',unsafe_allow_html=True)
 
 
-
-# Read the tab from the URL so the real HTML tabs can switch Streamlit pages
-# without opening a new tab and without replacing the authenticated session.
-query_page = st.query_params.get("page")
-if query_page in ("Dashboard", "Backtest", "History", "Profile"):
-    st.session_state.page = query_page
 
 selected_page=st.session_state.get("page","Dashboard")
 if selected_page not in ("Dashboard","Backtest","History","Profile"): selected_page="Dashboard"
