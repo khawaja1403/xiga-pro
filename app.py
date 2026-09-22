@@ -75,6 +75,9 @@ def init_state():
         "page": "Dashboard",
         "analysis_pending": None,
         "trade_pending": None,
+        "portal": "XIGA APP",
+        "admin_mode": False,
+        "partner_mode": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -189,11 +192,13 @@ def get_subscription_status():
         return None
     return None
 
-def call_xiga_function(action, key=None):
+def call_xiga_function(action, key=None, extra=None):
     token = st.session_state.get("xiga_access_token")
     payload = {"action": action}
     if key is not None:
         payload["key"] = key
+    if isinstance(extra, dict):
+        payload.update(extra)
     try:
         response = requests.post(
             XIGA_FUNCTION_URL,
@@ -227,123 +232,221 @@ footer,#MainMenu{display:none !important}
 </style>
 """, unsafe_allow_html=True)
 
+def _portal_tabs():
+    portal = st.session_state.get("portal", "XIGA APP")
+    selected = st.radio("Portal", ["XIGA APP", "REFERRAL"], index=0 if portal == "XIGA APP" else 1, horizontal=True, label_visibility="collapsed", key="portal_switch")
+    if selected != portal:
+        st.session_state.portal = selected
+        st.session_state.admin_mode = False
+        st.session_state.partner_mode = False
+        st.rerun()
+    return selected
+
+
+def _contact_activation_box():
+    st.markdown('''<div class="xiga-auth-card" style="text-align:center"><div style="font-size:13px;font-weight:900;color:#fff">Need your activation key?</div><div style="font-size:10px;color:#8ca1b7;margin-top:4px">Contact XIGA Admin to get your key.</div><div style="display:flex;justify-content:center;gap:10px;margin-top:10px"><a href="https://wa.me/923164451403" style="text-decoration:none;font-size:20px">🟢</a><a href="mailto:contactxigapro@gmail.com" style="text-decoration:none;font-size:20px">✉️</a><a href="https://www.facebook.com/xigapro" style="text-decoration:none;font-size:20px">🔵</a></div><div style="font-size:8px;color:#71899e;margin-top:7px">WhatsApp 03164451403 • contactxigapro@gmail.com • @xigapro</div></div>''', unsafe_allow_html=True)
+
+
+def _partner_status():
+    code, data = call_xiga_function("partner_status")
+    return data if code == 200 else None
+
+
+def _render_referral_partner_dashboard():
+    data = _partner_status() or {}
+    if not data.get("partner"):
+        return False
+    st.markdown('<div class="xiga-auth-topbar"><div></div><div class="xiga-auth-brand"><span>▰</span> XIGA</div><div class="xiga-auth-pro-wrap"><div class="xiga-auth-pro">REFERRAL</div></div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="xiga-auth-title">REFERRAL <span>PARTNER</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="xiga-auth-sub">Your referral account, earnings and referral history.</div>', unsafe_allow_html=True)
+    code = data.get("referral_code", "—"); link = data.get("referral_link", "—")
+    st.markdown(f'''<div class="xiga-auth-card"><div style="font-size:8px;color:#8ca1b7">YOUR REFERRAL CODE</div><div style="font-size:22px;font-weight:950;color:#20e7a0;margin-top:3px">{code}</div><div style="font-size:8px;color:#8ca1b7;margin-top:10px">YOUR REFERRAL LINK</div><div style="font-size:10px;color:#eaf6ff;word-break:break-all;margin-top:3px">{link}</div></div>''', unsafe_allow_html=True)
+    st.markdown(f'''<div class="xiga-stat-grid"><div class="xiga-stat-box"><b>TOTAL REFERRALS</b><span>{int(data.get("total_referrals",0))}</span></div><div class="xiga-stat-box"><b>QUALIFIED</b><span class="green">{int(data.get("qualified",0))}</span></div><div class="xiga-stat-box"><b>PENDING</b><span>{int(data.get("pending",0))}</span></div><div class="xiga-stat-box"><b>EARNED</b><span>Rs. {int(data.get("earned",0)):,}</span></div><div class="xiga-stat-box"><b>PAID</b><span class="green">Rs. {int(data.get("paid",0)):,}</span></div><div class="xiga-stat-box"><b>UNPAID</b><span class="red">Rs. {int(data.get("unpaid",0)):,}</span></div></div>''', unsafe_allow_html=True)
+    st.markdown('<div class="xiga-page-card"><div class="xiga-page-title" style="font-size:14px">Referral History</div></div>', unsafe_allow_html=True)
+    history = data.get("history") or []
+    if not history: st.caption("No referrals yet.")
+    for item in history[:100]:
+        status = str(item.get("status", "PENDING")).upper(); pay = str(item.get("payment_status", "UNPAID")).upper(); cls = "green" if status == "QUALIFIED" else ""
+        st.markdown(f'''<div class="xiga-history-item"><div class="xiga-history-top"><span>{item.get("referred_email","—")}</span><span class="{cls}">{status}</span></div><div class="xiga-history-sub">Code: {item.get("referral_code",code)} • Reward: Rs. {int(item.get("reward",1000)):,}<br>Payment: {pay}</div></div>''', unsafe_allow_html=True)
+    if st.button("LOG OUT", key="partner_logout", use_container_width=True): clear_session(); st.session_state.portal="REFERRAL"; st.rerun()
+    return True
+
+
+def _render_referral_portal():
+    render_auth_styles(); _portal_tabs()
+    if not SUPABASE_URL or not SUPABASE_PUBLISHABLE_KEY: st.error("XIGA account settings are missing."); st.stop()
+    if ensure_session_from_cookie():
+        if _render_referral_partner_dashboard(): return
+        clear_session()
+    st.markdown('<div class="xiga-auth-topbar"><div></div><div class="xiga-auth-brand"><span>▰</span> XIGA</div><div class="xiga-auth-pro-wrap"><div class="xiga-auth-pro">REFERRAL</div></div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="xiga-auth-title">REFERRAL <span>PARTNER</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="xiga-auth-sub">Create a referral account and earn Rs. 1,000 for each qualified referral.</div>', unsafe_allow_html=True)
+    mode = st.radio("Referral access", ["LOGIN", "SIGN UP"], horizontal=True, label_visibility="collapsed", key="partner_access_mode")
+    if mode == "LOGIN":
+        with st.form("partner_login"):
+            email=st.text_input("Email"); password=st.text_input("Password",type="password"); submit=st.form_submit_button("LOGIN")
+        if submit:
+            try:
+                response=requests.post(f"{SUPABASE_URL}/auth/v1/token?grant_type=password",headers=auth_headers(),json={"email":email.strip(),"password":password},timeout=15)
+                if response.status_code==200:
+                    save_session(response.json())
+                    call_xiga_function("partner_register")
+                    st.session_state.portal="REFERRAL"; st.rerun()
+                else: st.error("Invalid email or password, or the referral account is not confirmed.")
+            except requests.RequestException: st.error("Unable to connect to XIGA account service.")
+    else:
+        with st.form("partner_signup"):
+            full_name=st.text_input("Full name"); email=st.text_input("Email"); password=st.text_input("Password",type="password"); confirm=st.text_input("Confirm password",type="password"); payment_method=st.selectbox("Payment method",["EasyPaisa","JazzCash"]); payment_account=st.text_input("Payment account / number"); submit=st.form_submit_button("CREATE REFERRAL ACCOUNT")
+        if submit:
+            if not full_name.strip() or not email.strip() or len(password)<6 or password!=confirm or not payment_account.strip(): st.error("Complete all fields and use a matching password of at least 6 characters.")
+            else:
+                try:
+                    response=requests.post(f"{SUPABASE_URL}/auth/v1/signup",headers=auth_headers(),json={"email":email.strip(),"password":password,"data":{"full_name":full_name.strip(),"portal":"REFERRAL","payment_method":payment_method,"payment_account":payment_account.strip()}},timeout=15)
+                    if response.status_code in (200,201):
+                        data=response.json()
+                        if data.get("access_token"):
+                            save_session(data)
+                            call_xiga_function("partner_register", extra={"full_name":full_name.strip(),"payment_method":payment_method,"payment_account":payment_account.strip()})
+                            st.session_state.portal="REFERRAL"; st.rerun()
+                        st.success("Referral account created. Confirm your email, then log in.")
+                    else:
+                        try: msg=response.json().get("msg") or response.json().get("message")
+                        except Exception: msg=None
+                        st.error(msg or "Unable to create the referral account.")
+                except requests.RequestException: st.error("Unable to connect to XIGA account service.")
+    st.stop()
+
+
+def _admin_status():
+    code,data=call_xiga_function("admin_status")
+    return data if code==200 else {}
+
+
+def _admin_action(action, **kwargs):
+    return call_xiga_function(action, extra=kwargs)
+
+
+def admin_panel():
+    render_auth_styles(); status=_admin_status()
+    if not status.get("admin"): return False
+    st.markdown('<div class="xiga-auth-topbar"><div></div><div class="xiga-auth-brand"><span>▰</span> XIGA</div><div class="xiga-auth-pro-wrap"><div class="xiga-auth-pro">ADMIN</div></div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="xiga-auth-title">XIGA <span>ADMIN</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="xiga-auth-sub">Administrative controls. Passwords are never displayed.</div>', unsafe_allow_html=True)
+    section=st.radio("Admin sections",["Overview","Users","Generate Keys","Referrals","Partners","Subscriptions","Payments"],horizontal=True,label_visibility="collapsed",key="admin_section")
+    overview=status.get("overview") or {}
+    st.markdown(f'''<div class="xiga-stat-grid"><div class="xiga-stat-box"><b>USERS</b><span>{int(overview.get("users",0))}</span></div><div class="xiga-stat-box"><b>TOTAL REFERRALS</b><span>{int(overview.get("referrals",0))}</span></div><div class="xiga-stat-box"><b>QUALIFIED</b><span class="green">{int(overview.get("qualified",0))}</span></div><div class="xiga-stat-box"><b>PENDING</b><span>{int(overview.get("pending",0))}</span></div><div class="xiga-stat-box"><b>UNPAID REWARDS</b><span class="red">Rs. {int(overview.get("unpaid_rewards",0)):,}</span></div></div>''', unsafe_allow_html=True)
+    if section=="Overview": st.caption("Use the sections above to manage accounts, keys, referrals and payments.")
+    elif section=="Users":
+        for u in status.get("users") or []:
+            uid=u.get("id"); email=u.get("email","—")
+            st.markdown(f'''<div class="xiga-history-item"><div class="xiga-history-top"><span>{email}</span><span>{"ACTIVE" if u.get("active") else "INACTIVE"}</span></div><div class="xiga-history-sub">Subscription: {u.get("subscription_expires_at") or "—"}<br>Key: {u.get("key_status","—")} • Referrals: {u.get("referral_count",0)}</div></div>''',unsafe_allow_html=True)
+            c1,c2,c3,c4=st.columns(4)
+            with c1:
+                if st.button("BLOCK/UNBLOCK",key=f"block_{uid}"): _admin_action("admin_toggle_block",user_id=uid); st.rerun()
+            with c2:
+                if st.button("RESET PASSWORD",key=f"reset_{uid}"):
+                    code,data=_admin_action("admin_send_password_reset",email=email); st.success(data.get("message","Password reset email requested.")) if code==200 else st.error(data.get("error","Reset failed."))
+            with c3:
+                if st.button("REMOVE",key=f"remove_{uid}"): _admin_action("admin_remove_user",user_id=uid); st.rerun()
+            with c4:
+                gift=st.selectbox("GIFT",["1 month","2 months","3 months","4 months","5 months","6 months","1 year"],key=f"gift_{uid}")
+                if st.button("GIFT TIME",key=f"gift_btn_{uid}"):
+                    code,data=_admin_action("admin_gift_subscription",user_id=uid,duration=gift); st.success(data.get("message","Subscription extended.")) if code==200 else st.error(data.get("error","Gift failed."))
+    elif section=="Generate Keys":
+        users=status.get("waiting_for_key") or []
+        if not users: st.info("No users are currently waiting for an activation key.")
+        for u in users:
+            uid=u.get("id"); email=u.get("email","—")
+            st.markdown(f'''<div class="xiga-history-item"><div class="xiga-history-top"><span>{email}</span><span>{u.get("key_status","WAITING")}</span></div><div class="xiga-history-sub">Signed up: {u.get("created_at","—")} • Existing key: {u.get("has_key",False)}</div></div>''',unsafe_allow_html=True)
+            duration=st.selectbox("Subscription duration",["1 day","1 month","6 months","1 year","1.5 years","2 years"],key=f"key_duration_{uid}")
+            if st.button("GENERATE KEY",key=f"gen_key_{uid}"):
+                code,data=_admin_action("admin_generate_key",user_id=uid,duration=duration)
+                if code==200: st.success(data.get("message","Key generated and sent to admin email.")); st.rerun()
+                else: st.error(data.get("error","Unable to generate key."))
+    elif section=="Referrals":
+        for r in status.get("referrals") or []:
+            pay=str(r.get("payment_status","UNPAID")).upper()
+            st.markdown(f'''<div class="xiga-history-item"><div class="xiga-history-top"><span>{r.get("referrer_email","—")}</span><span>{str(r.get("status","PENDING")).upper()}</span></div><div class="xiga-history-sub">Code: {r.get("referral_code","—")} • Referred: {r.get("referred_email","—")}<br>Reward: Rs. {int(r.get("reward",1000)):,} • Payment: {pay}</div></div>''',unsafe_allow_html=True)
+            if pay!="PAID" and st.button("MARK AS PAID",key=f"paid_{r.get('id')}"):
+                code,data=_admin_action("admin_mark_referral_paid",referral_id=r.get("id")); st.success(data.get("message","Marked as paid.")) if code==200 else st.error(data.get("error","Payment update failed."))
+    elif section=="Partners":
+        for p in status.get("partners") or []:
+            st.markdown(f'''<div class="xiga-history-item"><div class="xiga-history-top"><span>{p.get("full_name","—")}</span><span>{p.get("referral_code","—")}</span></div><div class="xiga-history-sub">{p.get("email","—")} • {p.get("payment_method","—")} • {p.get("payment_account","—")}<br>Referrals: {p.get("total_referrals",0)} • Qualified: {p.get("qualified",0)} • Unpaid: Rs. {int(p.get("unpaid",0)):,}</div></div>''',unsafe_allow_html=True)
+    elif section=="Subscriptions":
+        for u in status.get("subscriptions") or []: st.write(f'{u.get("email","—")} • {u.get("subscription_expires_at","—")}')
+    elif section=="Payments":
+        for p in status.get("payments") or []: st.write(p)
+    if st.button("ADMIN LOG OUT",key="admin_logout",use_container_width=True): clear_session(); st.rerun()
+    st.stop()
+
+
 def xiga_subscription_login():
     render_auth_styles()
-    if not SUPABASE_URL or not SUPABASE_PUBLISHABLE_KEY:
-        st.error("XIGA PRO subscription settings are missing.")
-        st.stop()
-
+    if not SUPABASE_URL or not SUPABASE_PUBLISHABLE_KEY: st.error("XIGA PRO subscription settings are missing."); st.stop()
+    if st.session_state.get("portal","XIGA APP")=="REFERRAL": _render_referral_portal(); st.stop()
     if ensure_session_from_cookie():
-        status = get_subscription_status()
-        if status is None:
-            st.error("Unable to verify your XIGA PRO subscription right now.")
-            st.stop()
-        st.session_state["xiga_email"] = st.session_state.get("xiga_email") or status.get("email", "")
-        if status.get("active"):
-            st.session_state["xiga_subscription_active"] = True
-            return True
-
-        st.session_state["xiga_subscription_active"] = False
-        st.markdown("## XIGA PRO SUBSCRIPTION")
-        st.warning("Your XIGA PRO subscription is not active.")
-        expires = status.get("subscription_expires_at")
-        if expires:
-            st.info(f"Previous subscription expiry: {expires}")
-        request_key = st.button("GENERATE KEY", key="generate_activation_key", use_container_width=True)
-        if request_key:
-            code, data = call_xiga_function("request")
-            if code == 200:
-                st.success("Key request sent. Please contact the XIGA owner for your key.")
-            else:
-                st.error(data.get("error", "Unable to request a key."))
+        admin=_admin_status()
+        if admin.get("admin"): st.session_state.admin_mode=True; admin_panel()
+        status=get_subscription_status()
+        if status is None: st.error("Unable to verify your XIGA PRO subscription right now."); st.stop()
+        st.session_state["xiga_email"]=st.session_state.get("xiga_email") or status.get("email","")
+        if status.get("active"): st.session_state["xiga_subscription_active"]=True; return True
+        st.session_state["xiga_subscription_active"]=False
+        st.markdown("## XIGA PRO SUBSCRIPTION"); st.warning("Your XIGA PRO subscription is not active.")
+        expires=status.get("subscription_expires_at")
+        if expires: st.info(f"Previous subscription expiry: {expires}")
+        _contact_activation_box()
         with st.form("xiga_activate_key"):
-            activation_key = st.text_input("ACTIVATION KEY", placeholder="Enter the key provided to your account")
-            activate = st.form_submit_button("ACTIVATE KEY")
+            activation_key=st.text_input("ACTIVATION KEY",placeholder="Enter the key provided to your account"); activate=st.form_submit_button("ACTIVATE KEY")
         if activate:
-            if not activation_key.strip():
-                st.error("Please enter your activation key.")
-                st.stop()
-            code, data = call_xiga_function("activate", activation_key.strip())
-            if code == 200:
-                st.success("Subscription activated for 1 year. Opening XIGA PRO...")
-                st.rerun()
-            else:
-                st.error(data.get("error", "Activation failed."))
-        if st.button("LOG OUT", key="expired_logout", use_container_width=True):
-            clear_session()
-            st.rerun()
+            if not activation_key.strip(): st.error("Please enter your activation key."); st.stop()
+            code,data=call_xiga_function("activate",activation_key.strip())
+            if code==200: st.success("Subscription activated. Opening XIGA PRO..."); st.rerun()
+            else: st.error(data.get("error","Activation failed."))
+        if st.button("LOG OUT",key="expired_logout",use_container_width=True): clear_session(); st.rerun()
         st.stop()
-
-    st.markdown('<div class="xiga-auth-topbar"><div></div><div class="xiga-auth-brand"><span>▰</span> XIGA</div><div class="xiga-auth-pro-wrap"><div class="xiga-auth-pro">👑 PRO</div></div></div>', unsafe_allow_html=True)
-    st.markdown('<div class="xiga-auth-title">XIGA <span>PRO</span><br>SECURE ACCESS</div>', unsafe_allow_html=True)
-    st.markdown('<div class="xiga-auth-sub">Use your XIGA account to access the XIGA PRO trading app.</div>', unsafe_allow_html=True)
-    mode = st.radio("Access", ["LOGIN", "SIGN UP"], horizontal=True, label_visibility="collapsed", key="access_mode")
-
-    if mode == "LOGIN":
+    st.markdown('<div class="xiga-auth-topbar"><div></div><div class="xiga-auth-brand"><span>▰</span> XIGA</div><div class="xiga-auth-pro-wrap"><div class="xiga-auth-pro">👑 PRO</div></div></div>',unsafe_allow_html=True)
+    _portal_tabs()
+    st.markdown('<div class="xiga-auth-title">XIGA <span>PRO</span><br>SECURE ACCESS</div>',unsafe_allow_html=True)
+    st.markdown('<div class="xiga-auth-sub">Use your XIGA account to access the XIGA PRO trading app.</div>',unsafe_allow_html=True)
+    mode=st.radio("Access",["LOGIN","SIGN UP"],horizontal=True,label_visibility="collapsed",key="access_mode")
+    if mode=="LOGIN":
         with st.form("xiga_pro_login"):
-            email = st.text_input("Email")
-            password = st.text_input("Password", type="password")
-            login = st.form_submit_button("LOGIN")
+            email=st.text_input("Email"); password=st.text_input("Password",type="password"); login=st.form_submit_button("LOGIN")
         if login:
-            if not email or not password:
-                st.error("Please enter your email and password.")
-                st.stop()
+            if not email or not password: st.error("Please enter your email and password."); st.stop()
             try:
-                response = requests.post(
-                    f"{SUPABASE_URL}/auth/v1/token?grant_type=password",
-                    headers=auth_headers(),
-                    json={"email": email.strip(), "password": password},
-                    timeout=15,
-                )
-                if response.status_code != 200:
-                    st.error("Invalid email or password. If you just signed up, confirm your email first.")
-                    st.stop()
-                save_session(response.json())
-                st.rerun()
-            except requests.RequestException:
-                st.error("Unable to connect to XIGA account service.")
-                st.stop()
-
-    elif mode == "SIGN UP":
+                response=requests.post(f"{SUPABASE_URL}/auth/v1/token?grant_type=password",headers=auth_headers(),json={"email":email.strip(),"password":password},timeout=15)
+                if response.status_code!=200: st.error("Invalid email or password. If you just signed up, confirm your email first."); st.stop()
+                save_session(response.json()); st.session_state.portal="XIGA APP"; st.rerun()
+            except requests.RequestException: st.error("Unable to connect to XIGA account service."); st.stop()
+    else:
         with st.form("xiga_pro_signup"):
-            full_name = st.text_input("Full name")
-            email = st.text_input("Email")
-            password = st.text_input("Password", type="password")
-            confirm = st.text_input("Confirm password", type="password")
-            signup = st.form_submit_button("CREATE ACCOUNT")
-        if signup:
-            if not email or not password:
-                st.error("Email and password are required.")
-                st.stop()
-            if len(password) < 6:
-                st.error("Password must be at least 6 characters.")
-                st.stop()
-            if password != confirm:
-                st.error("Passwords do not match.")
-                st.stop()
+            full_name=st.text_input("Full name"); email=st.text_input("Email"); password=st.text_input("Password",type="password"); confirm=st.text_input("Confirm password",type="password")
             try:
-                response = requests.post(
-                    f"{SUPABASE_URL}/auth/v1/signup",
-                    headers=auth_headers(),
-                    json={"email": email.strip(), "password": password, "data": {"full_name": full_name.strip()}},
-                    timeout=15,
-                )
-                if response.status_code in (200, 201):
-                    data = response.json()
+                link_ref = str(st.query_params.get("ref", "")).strip()
+            except Exception:
+                link_ref = ""
+            referral_code=st.text_input("Referral code (optional)", value=link_ref)
+            signup=st.form_submit_button("CREATE ACCOUNT")
+        if signup:
+            if not email or not password: st.error("Email and password are required."); st.stop()
+            if len(password)<6: st.error("Password must be at least 6 characters."); st.stop()
+            if password!=confirm: st.error("Passwords do not match."); st.stop()
+            try:
+                response=requests.post(f"{SUPABASE_URL}/auth/v1/signup",headers=auth_headers(),json={"email":email.strip(),"password":password,"data":{"full_name":full_name.strip()}},timeout=15)
+                if response.status_code in (200,201):
+                    data=response.json()
                     if data.get("access_token"):
                         save_session(data)
+                        if referral_code.strip(): call_xiga_function("attach_referral",extra={"referral_code":referral_code.strip()})
                         st.rerun()
                     st.success("Account created. Please check your email, confirm your account, then log in.")
                 else:
-                    try:
-                        error_data = response.json()
-                        message = error_data.get("msg") or error_data.get("error_description") or error_data.get("message")
-                    except ValueError:
-                        message = None
+                    try: message=response.json().get("msg") or response.json().get("error_description") or response.json().get("message")
+                    except ValueError: message=None
                     st.error(message or "Unable to create the account.")
-            except requests.RequestException:
-                st.error("Unable to connect to XIGA account service.")
-
+            except requests.RequestException: st.error("Unable to connect to XIGA account service.")
     st.stop()
 
 xiga_subscription_login()
@@ -1878,6 +1981,12 @@ def profile_page():
     st.markdown('<div class="xiga-app">',unsafe_allow_html=True)
     st.markdown(f'''<div class="xiga-page-card"><div class="xiga-page-title">👤 Profile</div><div class="xiga-account-card" style="margin-top:10px"><div class="xiga-account-label">ACCOUNT EMAIL</div><div class="xiga-account-value">{email}</div><div class="xiga-profile-levels"><div class="xiga-profile-level"><b>STATUS</b><span>{"ACTIVE" if active else "INACTIVE"}</span></div><div class="xiga-profile-level"><b>DAYS LEFT</b><span>{days}</span></div><div class="xiga-profile-level"><b>EXPIRES</b><span>{expiry_short}</span></div></div></div></div>''',unsafe_allow_html=True)
     st.markdown(f'''<div class="xiga-page-card"><div class="xiga-page-title" style="font-size:14px">Quick Stats</div><div class="xiga-stat-grid"><div class="xiga-stat-box"><b>TOTAL SIGNALS</b><span>{total}</span></div><div class="xiga-stat-box"><b>WINS</b><span class="green">{wins}</span></div><div class="xiga-stat-box"><b>LOSSES</b><span class="red">{losses}</span></div><div class="xiga-stat-box"><b>EXPIRED</b><span>{expired}</span></div><div class="xiga-stat-box"><b>WIN RATE</b><span>{observed_rate:.1f}%</span></div><div class="xiga-stat-box"><b>TP HIT RATE</b><span>{tp_hit_rate:.1f}%</span></div></div><div class="xiga-note">These are recorded XIGA signals from your current session, not a prediction.</div></div>''',unsafe_allow_html=True)
+    ref_code, ref_data = call_xiga_function("referral_details")
+    ref_data = ref_data if ref_code == 200 else {}
+    st.markdown(f'''<div class="xiga-page-card"><div class="xiga-page-title" style="font-size:14px">Referral Details</div><div class="xiga-note">Refer unlimited customers. A referral becomes QUALIFIED only after the referred customer activates their XIGA subscription key. Reward: Rs. 1,000 per qualified referral.</div><div class="xiga-account-card" style="margin-top:9px"><div class="xiga-account-label">REFERRAL CODE</div><div class="xiga-account-value" style="color:#20e7a0">{ref_data.get("referral_code","—")}</div><div class="xiga-account-label" style="margin-top:8px">REFERRAL LINK</div><div style="font-size:9px;color:#dceeff;word-break:break-all;margin-top:3px">{ref_data.get("referral_link","—")}</div></div><div class="xiga-stat-grid"><div class="xiga-stat-box"><b>TOTAL</b><span>{int(ref_data.get("total_referrals",0))}</span></div><div class="xiga-stat-box"><b>QUALIFIED</b><span class="green">{int(ref_data.get("qualified",0))}</span></div><div class="xiga-stat-box"><b>PENDING</b><span>{int(ref_data.get("pending",0))}</span></div><div class="xiga-stat-box"><b>EARNED</b><span>Rs. {int(ref_data.get("earned",0)):,}</span></div><div class="xiga-stat-box"><b>PAID</b><span class="green">Rs. {int(ref_data.get("paid",0)):,}</span></div><div class="xiga-stat-box"><b>UNPAID</b><span class="red">Rs. {int(ref_data.get("unpaid",0)):,}</span></div></div></div>''',unsafe_allow_html=True)
+    for item in (ref_data.get("history") or [])[:100]:
+        status_label=str(item.get("status","PENDING")).upper(); cls="green" if status_label=="QUALIFIED" else ""
+        st.markdown(f'''<div class="xiga-history-item"><div class="xiga-history-top"><span>{item.get("referred_email","—")}</span><span class="{cls}">{status_label}</span></div><div class="xiga-history-sub">Reward: Rs. {int(item.get("reward",1000)):,} • Payment: {str(item.get("payment_status","UNPAID")).upper()}</div></div>''',unsafe_allow_html=True)
     if st.button("🚪 LOG OUT",key="profile_logout",use_container_width=True): clear_session(); st.rerun()
     st.markdown('<div class="xiga-footer">XIGA PRO • ACCOUNT & SUBSCRIPTION</div></div>',unsafe_allow_html=True)
 
