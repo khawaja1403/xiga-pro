@@ -2073,9 +2073,9 @@ def backtest_page():
             ("SIGNALS TESTED", f'{int(result.get("signals", 0)):,}', ""),
             ("WINS", f'{int(result.get("wins", 0)):,}', "green"),
             ("LOSSES", f'{int(result.get("losses", 0)):,}', "red"),
-            ("OBSERVED WIN RATE", f'{float(result.get("accuracy", 0)):.2f}%", ""),
+            ("OBSERVED WIN RATE", f'{float(result.get("accuracy", 0)):.2f}%', ""),
             ("TP HITS", f'{int(result.get("tp_hits", 0)):,}', "green"),
-            ("TP HIT RATE", f'{float(result.get("tp_rate", 0)):.2f}%", ""),
+            ("TP HIT RATE", f'{float(result.get("tp_rate", 0)):.2f}%', ""),
         ]
         html = "".join(f'<div class="xiga-stat-box"><b>{label}</b><span class="{color}">{value}</span></div>' for label, value, color in cards)
         st.markdown(f'<div class="xiga-stat-grid">{html}</div>', unsafe_allow_html=True)
