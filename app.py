@@ -7,6 +7,7 @@ import hashlib
 from cryptography.fernet import Fernet, InvalidToken
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+from html import escape
 
 try:
     import plotly.graph_objects as go
@@ -2022,6 +2023,140 @@ st.markdown("""<style>
 
 </style>
 """, unsafe_allow_html=True)
+
+
+
+def _safe_page_text(value, fallback="—"):
+    if value is None or str(value).strip() == "":
+        return escape(fallback)
+    return escape(str(value))
+
+
+def backtest_page():
+    st.markdown('<div class="xiga-app">', unsafe_allow_html=True)
+    st.markdown('<div class="xiga-page-card"><div class="xiga-page-title">BACKTEST</div><div class="xiga-page-sub">Historical validation uses completed candles from the selected exchange. Results are observed history, not a guarantee of future performance.</div></div>', unsafe_allow_html=True)
+
+    provider_options = BACKTEST_PROVIDERS
+    provider = st.selectbox("Provider", provider_options, key="backtest_provider")
+    asset_map, catalog_status = get_spot_exchange_assets(provider)
+    asset_names = list(asset_map.keys())
+    if not asset_names:
+        st.error("No historical instruments are currently available.")
+        st.caption(catalog_status)
+        st.markdown('</div>', unsafe_allow_html=True)
+        return
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        asset = st.selectbox("Asset", asset_names, key="backtest_asset")
+    with c2:
+        timeframe = st.selectbox("Timeframe", list(TIMEFRAMES.keys()), key="backtest_timeframe")
+    with c3:
+        target_count = st.selectbox("Historical candles", [BACKTEST_STANDARD_CANDLES, BACKTEST_DEEP_CANDLES], format_func=lambda value: f"{value:,}", key="backtest_depth")
+
+    st.caption("Each run fetches historical market data and excludes incomplete candles.")
+    if st.button("RUN HISTORICAL BACKTEST", key="run_xiga_backtest", use_container_width=True):
+        with st.spinner("Fetching historical candles and calculating results..."):
+            st.session_state.backtest_result = run_xiga_backtest(provider, asset_map[asset], timeframe, target_count)
+
+    result = st.session_state.get("backtest_result")
+    if not result:
+        st.markdown('<div class="xiga-card"><div class="xiga-muted">Choose a market and run a historical backtest to see calculated results.</div></div>', unsafe_allow_html=True)
+    elif not result.get("success"):
+        st.error(result.get("error", "The historical backtest could not be completed."))
+        if result.get("status"):
+            st.caption(result["status"])
+    else:
+        status_label = "VALIDATION PASSED" if result.get("validation_ok") else "VALIDATION NOT PASSED"
+        status_class = "green" if result.get("validation_ok") else "red"
+        cards = [
+            ("SIGNALS TESTED", f'{int(result.get("signals", 0)):,}', ""),
+            ("WINS", f'{int(result.get("wins", 0)):,}', "green"),
+            ("LOSSES", f'{int(result.get("losses", 0)):,}', "red"),
+            ("OBSERVED WIN RATE", f'{float(result.get("accuracy", 0)):.2f}%", ""),
+            ("TP HITS", f'{int(result.get("tp_hits", 0)):,}', "green"),
+            ("TP HIT RATE", f'{float(result.get("tp_rate", 0)):.2f}%", ""),
+        ]
+        html = "".join(f'<div class="xiga-stat-box"><b>{label}</b><span class="{color}">{value}</span></div>' for label, value, color in cards)
+        st.markdown(f'<div class="xiga-stat-grid">{html}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="xiga-card"><div class="xiga-status-item"><div class="xiga-status-label">HISTORICAL VALIDATION</div><div class="xiga-status-value {status_class}">{status_label}</div></div><div class="xiga-note">{_safe_page_text(result.get("validation_reason", "Calculated from the returned historical data."))}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="xiga-note">Provider: {_safe_page_text(provider)} • Asset: {_safe_page_text(asset)} • Timeframe: {_safe_page_text(timeframe)} • Completed candles: {int(result.get("candles", 0)):,}</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+def history_page():
+    st.markdown('<div class="xiga-app">', unsafe_allow_html=True)
+    st.markdown('<div class="xiga-page-card"><div class="xiga-page-title">HISTORY</div><div class="xiga-page-sub">Recorded live signals from this browser session. A signal is not counted as a win until its observed result is determined.</div></div>', unsafe_allow_html=True)
+    history = st.session_state.get("history") or []
+    wins = sum(1 for item in history if item.get("status") == "WIN")
+    losses = sum(1 for item in history if item.get("status") == "LOSS")
+    decided = wins + losses
+    cards = "".join([
+        f'<div class="xiga-stat-box"><b>TOTAL SIGNALS</b><span>{len(history):,}</span></div>',
+        f'<div class="xiga-stat-box"><b>WINS</b><span class="green">{wins:,}</span></div>',
+        f'<div class="xiga-stat-box"><b>LOSSES</b><span class="red">{losses:,}</span></div>',
+        f'<div class="xiga-stat-box"><b>OBSERVED WIN RATE</b><span>{(wins / decided * 100) if decided else 0:.2f}%</span></div>',
+    ])
+    st.markdown(f'<div class="xiga-stat-grid">{cards}</div>', unsafe_allow_html=True)
+    if not history:
+        st.markdown('<div class="xiga-card"><div class="xiga-muted">No live signals have been recorded in this session.</div></div>', unsafe_allow_html=True)
+    else:
+        for item in history[:100]:
+            status = str(item.get("status", "PENDING")).upper()
+            status_class = "green" if status == "WIN" else "red" if status == "LOSS" else ""
+            signal = signal_display(str(item.get("signal", "NO TRADE")))
+            entry = item.get("price", item.get("entry_price", "—"))
+            tp = item.get("take_profit", "—")
+            sl = item.get("stop_loss", "—")
+            result_price = item.get("result_price", "—")
+            st.markdown(f'<div class="xiga-history-item"><div class="xiga-history-top"><span>{_safe_page_text(item.get("asset", "—"))} • {_safe_page_text(signal)}</span><span class="{status_class}">{_safe_page_text(status)}</span></div><div class="xiga-history-sub">{_safe_page_text(item.get("provider", "—"))} • {_safe_page_text(item.get("timeframe", "—"))} • {_safe_page_text(item.get("time", "—"))}<br>Entry: {_safe_page_text(entry)} • TP: {_safe_page_text(tp)} • SL: {_safe_page_text(sl)} • Result: {_safe_page_text(result_price)}</div><div class="xiga-history-result">{_safe_page_text(item.get("result_reason", item.get("analysis_description", "Awaiting observed result.")))}</div></div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+def profile_page():
+    st.markdown('<div class="xiga-app">', unsafe_allow_html=True)
+    st.markdown('<div class="xiga-page-card"><div class="xiga-page-title">PROFILE</div><div class="xiga-page-sub">Account, subscription, observed signal statistics and referral details.</div></div>', unsafe_allow_html=True)
+    email = st.session_state.get("xiga_email", "—")
+    subscription = get_subscription_status() or st.session_state.get("xiga_status") or {}
+    active = bool(subscription.get("active"))
+    expiry = subscription.get("subscription_expires_at") or "—"
+    history = st.session_state.get("history") or []
+    wins = sum(1 for item in history if item.get("status") == "WIN")
+    losses = sum(1 for item in history if item.get("status") == "LOSS")
+    expired = sum(1 for item in history if item.get("status") in ("EXPIRED", "DRAW"))
+    decided = wins + losses
+    stats = "".join([
+        f'<div class="xiga-profile-level"><b>TOTAL SIGNALS</b><span>{len(history):,}</span></div>',
+        f'<div class="xiga-profile-level"><b>WINS</b><span>{wins:,}</span></div>',
+        f'<div class="xiga-profile-level"><b>LOSSES</b><span>{losses:,}</span></div>',
+        f'<div class="xiga-profile-level"><b>EXPIRED</b><span>{expired:,}</span></div>',
+        f'<div class="xiga-profile-level"><b>OBSERVED WIN RATE</b><span>{(wins / decided * 100) if decided else 0:.2f}%</span></div>',
+    ])
+    st.markdown(f'<div class="xiga-account-card"><div class="xiga-account-label">ACCOUNT EMAIL</div><div class="xiga-account-value">{_safe_page_text(email)}</div><div class="xiga-account-label" style="margin-top:10px">SUBSCRIPTION</div><div class="xiga-account-value {"green" if active else "red"}">{"ACTIVE" if active else "INACTIVE"}</div><div class="xiga-account-label" style="margin-top:10px">SUBSCRIPTION EXPIRY</div><div class="xiga-account-value">{_safe_page_text(expiry)}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="xiga-profile-levels">{stats}</div>', unsafe_allow_html=True)
+
+    code, referral = call_xiga_function("referral_details")
+    referral = referral if code == 200 else {}
+    st.markdown('<div class="xiga-card"><div class="xiga-page-title" style="font-size:14px">REFERRAL DETAILS</div>', unsafe_allow_html=True)
+    if referral:
+        referral_stats = "".join([
+            f'<div class="xiga-stat-box"><b>TOTAL REFERRALS</b><span>{int(referral.get("total_referrals", 0)):,}</span></div>',
+            f'<div class="xiga-stat-box"><b>QUALIFIED</b><span class="green">{int(referral.get("qualified", 0)):,}</span></div>',
+            f'<div class="xiga-stat-box"><b>PENDING</b><span>{int(referral.get("pending", 0)):,}</span></div>',
+            f'<div class="xiga-stat-box"><b>UNPAID</b><span class="red">Rs. {int(referral.get("unpaid", 0)):,}</span></div>',
+        ])
+        st.markdown(f'<div class="xiga-stat-grid">{referral_stats}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="xiga-note">Referral code: <b>{_safe_page_text(referral.get("referral_code"))}</b></div>', unsafe_allow_html=True)
+        st.code(str(referral.get("referral_link", "—")), language=None)
+        st.markdown('<div class="xiga-page-sub">REFERRAL HISTORY</div>', unsafe_allow_html=True)
+        referral_history = referral.get("history") or []
+        if not referral_history:
+            st.markdown('<div class="xiga-muted">No referrals recorded yet.</div>', unsafe_allow_html=True)
+        for item in referral_history[:100]:
+            st.markdown(f'<div class="xiga-history-item"><div class="xiga-history-top"><span>{_safe_page_text(email)} → {_safe_page_text(item.get("referred_email", "—"))}</span><span>{_safe_page_text(str(item.get("status", "PENDING")).upper())}</span></div><div class="xiga-history-sub">Reward: Rs. {int(item.get("reward", 0)):,} • Payment: {_safe_page_text(str(item.get("payment_status", "UNPAID")).upper())}<br>Created: {_safe_page_text(item.get("created_at", "—"))}</div></div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="xiga-muted">Referral details are temporarily unavailable.</div>', unsafe_allow_html=True)
+    st.markdown('</div></div>', unsafe_allow_html=True)
 
 def render_app_header(active_page):
     provider = st.session_state.get("provider", "Binance")
