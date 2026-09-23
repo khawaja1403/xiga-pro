@@ -524,7 +524,10 @@ def admin_panel():
                 gift=st.selectbox("Gift time",["1 month","2 months","3 months","4 months","5 months","6 months","1 year"],key=f"gift_{uid}")
                 if st.button("GIFT TIME",key=f"gift_btn_{uid}",use_container_width=True):
                     code,data=_admin_action("admin_gift_subscription",user_id=uid,duration=gift)
-                    st.success(data.get("message","Subscription extended.")) if code==200 else st.error(data.get("error","Gift failed."))
+                    if code==200:
+                        st.success(data.get("message","Subscription extended."))
+                    else:
+                        st.error(data.get("error","Gift failed."))
 
     elif section == "Generate Keys":
         st.markdown('<div class="portal-section-head"><div><div class="portal-card-title">GENERATE ACTIVATION KEYS</div><div class="portal-muted">Only users waiting for a key are shown here.</div></div></div>', unsafe_allow_html=True)
