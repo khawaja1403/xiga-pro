@@ -126,6 +126,8 @@ def auth_headers(access_token=None):
     return headers
 
 def save_session(data):
+    # A successful manual login explicitly re-enables persistent login.
+    st.session_state.pop("xiga_logged_out", None)
     st.session_state["xiga_access_token"] = data.get("access_token", "")
     st.session_state["xiga_refresh_token"] = data.get("refresh_token", "")
     st.session_state["xiga_email"] = data.get("user", {}).get("email") or st.session_state.get("xiga_email", "")
@@ -134,7 +136,10 @@ def save_session(data):
         set_persistent_refresh_cookie(refresh_token)
 
 def clear_session():
-    for key in ("xiga_access_token", "xiga_refresh_token", "xiga_email", "xiga_status", "xiga_subscription_active"):
+    # Prevent CookieManager's asynchronous read from immediately restoring
+    # the session after an explicit LOG OUT click.
+    st.session_state["xiga_logged_out"] = True
+    for key in ("xiga_access_token", "xiga_refresh_token", "xiga_email", "xiga_status", "xiga_subscription_active", "admin_mode", "partner_mode"):
         st.session_state.pop(key, None)
     delete_persistent_refresh_cookie()
 
@@ -154,6 +159,8 @@ def refresh_access_token(refresh_token):
     return False
 
 def ensure_session_from_cookie():
+    if st.session_state.get("xiga_logged_out"):
+        return False
     if st.session_state.get("xiga_access_token"):
         return True
 
@@ -232,6 +239,21 @@ footer,#MainMenu{display:none !important}
 </style>
 """, unsafe_allow_html=True)
 
+st.markdown("""
+<style>
+/* XIGA admin/referral portal UI */
+.portal-hero{background:linear-gradient(145deg,rgba(14,53,78,.98),rgba(4,18,31,.98));border:1px solid rgba(41,245,166,.28);border-radius:22px;padding:18px;margin:10px 0 12px;box-shadow:0 18px 45px rgba(0,0,0,.28)}
+.portal-eyebrow{font-size:8px;letter-spacing:1.6px;color:#29f5a6;font-weight:900}.portal-hero-title{font-size:21px;font-weight:950;color:#fff;margin-top:5px}.portal-hero-sub{font-size:10px;color:#8da4b8;line-height:1.55;margin-top:6px}
+.portal-metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:10px 0}.portal-metrics-3{grid-template-columns:repeat(3,1fr)}
+.portal-metric{background:linear-gradient(145deg,#071d2e,#04111d);border:1px solid #0b4e70;border-radius:15px;padding:12px;text-align:left;min-width:0}.portal-metric div{font-size:7px;letter-spacing:.8px;color:#7892a6;font-weight:900}.portal-metric strong{display:block;font-size:18px;color:#edf8ff;margin-top:5px;font-weight:950;word-break:break-word}.portal-metric strong.green,.portal-badge.green{color:#29f5a6}.portal-metric strong.red{color:#ff6678}.portal-metric strong.amber,.portal-badge.amber{color:#ffd36b}
+.portal-card{background:linear-gradient(145deg,#061b2d,#03101b);border:1px solid #0b4e70;border-radius:18px;padding:14px;margin-top:10px;box-shadow:0 14px 34px rgba(0,0,0,.22)}.portal-card-title{font-size:9px;letter-spacing:1px;color:#8ea7ba;font-weight:950}.portal-code{font-size:21px;color:#29f5a6;font-weight:950;margin-top:6px;letter-spacing:.5px}.portal-link{font-size:9px;color:#dceeff;word-break:break-all;line-height:1.5;margin-top:7px}.portal-muted{font-size:9px;color:#7f96aa;line-height:1.5}.portal-section-head{display:flex;justify-content:space-between;align-items:end;margin:12px 2px 7px}.portal-empty{border:1px dashed #174b68;background:rgba(4,18,29,.65);border-radius:15px;padding:18px;text-align:center;color:#7891a5;font-size:9px;margin-top:8px}.portal-empty.small{padding:9px;margin-bottom:7px}
+.portal-record{background:linear-gradient(145deg,#061a2a,#03111d);border:1px solid #0a4665;border-radius:16px;padding:12px;margin-top:8px}.portal-record-top{display:flex;align-items:center;justify-content:space-between;gap:8px}.portal-record-email{font-size:11px;color:#f1f8ff;font-weight:900;word-break:break-word}.portal-badge{display:inline-flex;align-items:center;justify-content:center;border:1px solid currentColor;border-radius:999px;padding:4px 7px;font-size:7px;font-weight:950;letter-spacing:.5px;white-space:nowrap;color:#ffd36b}.portal-badge.red{color:#ff6678}.portal-record-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:10px}.portal-record-grid>div{border:1px solid #0b3c57;border-radius:10px;padding:7px;min-width:0}.portal-record-grid small{display:block;font-size:6px;color:#71899c;font-weight:900}.portal-record-grid b{display:block;font-size:8px;color:#dceeff;margin-top:3px;word-break:break-word}.portal-record-footer{font-size:8px;color:#7891a5;line-height:1.5;margin-top:9px}.portal-activity{display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid #0b2e43;padding:9px 1px}.portal-activity:last-child{border-bottom:0}.portal-activity b{display:block;font-size:9px;color:#eaf6ff;word-break:break-word}.portal-activity span{display:block;font-size:7px;color:#71899c;margin-top:3px}.portal-activity small{font-size:7px;color:#71899c;white-space:nowrap}.portal-progress-track{height:8px;background:#03111d;border:1px solid #0b405d;border-radius:999px;overflow:hidden;margin-top:12px}.portal-progress-fill{height:100%;background:linear-gradient(90deg,#12c985,#42f6b0);border-radius:999px}.portal-progress-label{display:flex;justify-content:space-between;color:#7891a5;font-size:8px;margin-top:6px}.portal-profile-card{display:flex;align-items:center;gap:12px;background:linear-gradient(145deg,#0a2236,#04121f);border:1px solid #0b4e70;border-radius:18px;padding:14px;margin-top:10px}.portal-avatar{width:42px;height:42px;border-radius:14px;background:linear-gradient(135deg,#16cf8c,#0a7351);display:flex;align-items:center;justify-content:center;color:#03130d;font-weight:950;font-size:18px}.portal-profile-name{font-size:13px;font-weight:950;color:#fff}.portal-detail-row{display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid #0a3147;padding:10px 0}.portal-detail-row:last-child{border-bottom:0}.portal-detail-row span{font-size:7px;color:#7891a5;font-weight:900}.portal-detail-row b{font-size:9px;color:#eaf6ff;text-align:right;word-break:break-word}.portal-group-title{display:flex;justify-content:space-between;align-items:center;color:#8ea7ba;font-size:8px;letter-spacing:1px;font-weight:950;margin:15px 2px 6px}.portal-group-title b{color:#29f5a6;font-size:11px}
+/* Portal navigation */
+div[data-testid="stRadio"]:has(input[key="admin_section"]){}
+@media(max-width:560px){.portal-record-grid{grid-template-columns:repeat(2,1fr)}.portal-metrics-3{grid-template-columns:1fr}.portal-hero-title{font-size:19px}}
+</style>
+""", unsafe_allow_html=True)
+
 def _portal_tabs():
     portal = st.session_state.get("portal", "XIGA APP")
     selected = st.radio("Portal", ["XIGA APP", "REFERRAL"], index=0 if portal == "XIGA APP" else 1, horizontal=True, label_visibility="collapsed", key="portal_switch")
@@ -244,7 +266,13 @@ def _portal_tabs():
 
 
 def _contact_activation_box():
-    st.markdown('''<div class="xiga-auth-card" style="text-align:center"><div style="font-size:13px;font-weight:900;color:#fff">Need your activation key?</div><div style="font-size:10px;color:#8ca1b7;margin-top:4px">Contact XIGA Admin to get your key.</div><div style="display:flex;justify-content:center;gap:10px;margin-top:10px"><a href="https://wa.me/923164451403" style="text-decoration:none;font-size:20px">🟢</a><a href="mailto:contactxigapro@gmail.com" style="text-decoration:none;font-size:20px">✉️</a><a href="https://www.facebook.com/xigapro" style="text-decoration:none;font-size:20px">🔵</a></div><div style="font-size:8px;color:#71899e;margin-top:7px">WhatsApp 03164451403 • contactxigapro@gmail.com • @xigapro</div></div>''', unsafe_allow_html=True)
+    st.markdown('''<div class="xiga-auth-card" style="text-align:center">
+<div style="font-size:13px;font-weight:900;color:#fff">Need your activation key?</div>
+<div style="font-size:10px;color:#8ca1b7;margin-top:4px">Contact XIGA Admin to get your key.</div>
+<div style="font-size:10px;margin-top:11px;line-height:1.9">
+<a href="https://wa.me/923164451403" target="_blank" style="color:#29f5a6;text-decoration:none;font-weight:800">WhatsApp: 03164451403</a><br>
+<a href="mailto:contactxigapro@gmail.com" style="color:#dceeff;text-decoration:none;font-weight:800">Email: contactxigapro@gmail.com</a>
+</div></div>''', unsafe_allow_html=True)
 
 
 def _partner_status():
@@ -252,23 +280,111 @@ def _partner_status():
     return data if code == 200 else None
 
 
+def _partner_nav(active):
+    options = ["Dashboard", "Referrals", "Earnings", "Profile"]
+    selected = st.radio(
+        "Referral partner navigation",
+        options,
+        index=options.index(active) if active in options else 0,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="partner_section",
+    )
+    if selected != active:
+        st.session_state["partner_section"] = selected
+        st.rerun()
+    return selected
+
+
+def _fmt_admin_date(value, fallback="—"):
+    if not value:
+        return fallback
+    try:
+        text = str(value).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(text)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(ZoneInfo("Asia/Karachi"))
+        return dt.strftime("%d %b %Y • %I:%M %p").replace(" 0", " ")
+    except Exception:
+        return str(value)[:19].replace("T", " ")
+
+
 def _render_referral_partner_dashboard():
     data = _partner_status() or {}
     if not data.get("partner"):
         return False
+
     st.markdown('<div class="xiga-auth-topbar"><div></div><div class="xiga-auth-brand"><span>▰</span> XIGA</div><div class="xiga-auth-pro-wrap"><div class="xiga-auth-pro">REFERRAL</div></div></div>', unsafe_allow_html=True)
     st.markdown('<div class="xiga-auth-title">REFERRAL <span>PARTNER</span></div>', unsafe_allow_html=True)
-    st.markdown('<div class="xiga-auth-sub">Your referral account, earnings and referral history.</div>', unsafe_allow_html=True)
-    code = data.get("referral_code", "—"); link = data.get("referral_link", "—")
-    st.markdown(f'''<div class="xiga-auth-card"><div style="font-size:8px;color:#8ca1b7">YOUR REFERRAL CODE</div><div style="font-size:22px;font-weight:950;color:#20e7a0;margin-top:3px">{code}</div><div style="font-size:8px;color:#8ca1b7;margin-top:10px">YOUR REFERRAL LINK</div><div style="font-size:10px;color:#eaf6ff;word-break:break-all;margin-top:3px">{link}</div></div>''', unsafe_allow_html=True)
-    st.markdown(f'''<div class="xiga-stat-grid"><div class="xiga-stat-box"><b>TOTAL REFERRALS</b><span>{int(data.get("total_referrals",0))}</span></div><div class="xiga-stat-box"><b>QUALIFIED</b><span class="green">{int(data.get("qualified",0))}</span></div><div class="xiga-stat-box"><b>PENDING</b><span>{int(data.get("pending",0))}</span></div><div class="xiga-stat-box"><b>EARNED</b><span>Rs. {int(data.get("earned",0)):,}</span></div><div class="xiga-stat-box"><b>PAID</b><span class="green">Rs. {int(data.get("paid",0)):,}</span></div><div class="xiga-stat-box"><b>UNPAID</b><span class="red">Rs. {int(data.get("unpaid",0)):,}</span></div></div>''', unsafe_allow_html=True)
-    st.markdown('<div class="xiga-page-card"><div class="xiga-page-title" style="font-size:14px">Referral History</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="xiga-auth-sub">Manage your referrals, earnings and partner account.</div>', unsafe_allow_html=True)
+
+    section = _partner_nav(st.session_state.get("partner_section", "Dashboard"))
     history = data.get("history") or []
-    if not history: st.caption("No referrals yet.")
-    for item in history[:100]:
-        status = str(item.get("status", "PENDING")).upper(); pay = str(item.get("payment_status", "UNPAID")).upper(); cls = "green" if status == "QUALIFIED" else ""
-        st.markdown(f'''<div class="xiga-history-item"><div class="xiga-history-top"><span>{item.get("referred_email","—")}</span><span class="{cls}">{status}</span></div><div class="xiga-history-sub">Code: {item.get("referral_code",code)} • Reward: Rs. {int(item.get("reward",1000)):,}<br>Payment: {pay}</div></div>''', unsafe_allow_html=True)
-    if st.button("LOG OUT", key="partner_logout", use_container_width=True): clear_session(); st.session_state.portal="REFERRAL"; st.rerun()
+
+    if section == "Dashboard":
+        st.markdown('''<div class="portal-hero"><div class="portal-eyebrow">REFERRAL PERFORMANCE</div><div class="portal-hero-title">Build your XIGA network</div><div class="portal-hero-sub">Earn Rs. 1,000 for every referral that becomes qualified after subscription activation.</div></div>''', unsafe_allow_html=True)
+        stats = [
+            ("TOTAL REFERRALS", int(data.get("total_referrals", 0)), ""),
+            ("QUALIFIED", int(data.get("qualified", 0)), "green"),
+            ("PENDING", int(data.get("pending", 0)), ""),
+            ("UNPAID", f'Rs. {int(data.get("unpaid", 0)):,}', "red"),
+        ]
+        cards = "".join(f'<div class="portal-metric"><div>{label}</div><strong class="{cls}">{value}</strong></div>' for label,value,cls in stats)
+        st.markdown(f'<div class="portal-metrics">{cards}</div>', unsafe_allow_html=True)
+        total = int(data.get("total_referrals", 0)); qualified = int(data.get("qualified", 0))
+        percent = (qualified / total * 100) if total else 0
+        st.markdown(f'''<div class="portal-card"><div class="portal-card-title">QUALIFICATION PROGRESS</div><div class="portal-progress-track"><div class="portal-progress-fill" style="width:{min(100,max(0,percent)):.1f}%"></div></div><div class="portal-progress-label"><span>{qualified} qualified</span><span>{total} total</span></div></div>''', unsafe_allow_html=True)
+        code = data.get("referral_code", "—")
+        link = data.get("referral_link", "—")
+        st.markdown(f'''<div class="portal-card"><div class="portal-card-title">SHARE YOUR REFERRAL LINK</div><div class="portal-code">{code}</div><div class="portal-link">{link}</div></div>''', unsafe_allow_html=True)
+        st.code(str(link), language=None)
+        st.caption("Copy the link above and share it with people you want to refer.")
+
+    elif section == "Referrals":
+        st.markdown('<div class="portal-section-head"><div><div class="portal-card-title">YOUR REFERRALS</div><div class="portal-muted">People who joined through your referral code.</div></div></div>', unsafe_allow_html=True)
+        filter_value = st.radio("Referral filter", ["ALL", "PENDING", "QUALIFIED"], horizontal=True, label_visibility="collapsed", key="partner_referral_filter")
+        items = [x for x in history if filter_value == "ALL" or str(x.get("status", "PENDING")).upper() == filter_value]
+        if not items:
+            st.markdown('<div class="portal-empty">No referrals in this category yet.</div>', unsafe_allow_html=True)
+        for item in items[:100]:
+            status = str(item.get("status", "PENDING")).upper()
+            cls = "green" if status == "QUALIFIED" else "amber"
+            reward = int(item.get("reward", 1000)) if status == "QUALIFIED" else 0
+            joined = _fmt_admin_date(item.get("created_at") or item.get("referred_at"))
+            st.markdown(f'''<div class="portal-record"><div class="portal-record-top"><div class="portal-record-email">{item.get("referred_email", "—")}</div><span class="portal-badge {cls}">{status}</span></div><div class="portal-record-grid"><div><small>JOINED</small><b>{joined}</b></div><div><small>REWARD</small><b>Rs. {reward:,}</b></div><div><small>PAYMENT</small><b>{str(item.get("payment_status", "UNPAID")).upper()}</b></div></div></div>''', unsafe_allow_html=True)
+
+    elif section == "Earnings":
+        st.markdown('<div class="portal-section-head"><div><div class="portal-card-title">EARNINGS</div><div class="portal-muted">Your referral rewards and payment records.</div></div></div>', unsafe_allow_html=True)
+        earned = int(data.get("earned", 0)); paid = int(data.get("paid", 0)); unpaid = int(data.get("unpaid", 0))
+        cards = "".join([
+            f'<div class="portal-metric"><div>TOTAL EARNED</div><strong>Rs. {earned:,}</strong></div>',
+            f'<div class="portal-metric"><div>PAID</div><strong class="green">Rs. {paid:,}</strong></div>',
+            f'<div class="portal-metric"><div>UNPAID</div><strong class="red">Rs. {unpaid:,}</strong></div>',
+        ])
+        st.markdown(f'<div class="portal-metrics portal-metrics-3">{cards}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="portal-card"><div class="portal-card-title">PAYMENT HISTORY</div></div>', unsafe_allow_html=True)
+        payment_items = [x for x in history if str(x.get("payment_status", "UNPAID")).upper() == "PAID"]
+        if not payment_items:
+            st.markdown('<div class="portal-empty">No paid rewards yet.</div>', unsafe_allow_html=True)
+        for item in payment_items[:100]:
+            amount = int(item.get("reward", 1000))
+            paid_date = _fmt_admin_date(item.get("paid_at") or item.get("payment_date") or item.get("updated_at"))
+            st.markdown(f'''<div class="portal-record"><div class="portal-record-top"><div><div class="portal-record-email">Rs. {amount:,}</div><div class="portal-muted">Referral reward • {item.get("referred_email", "—")}</div></div><span class="portal-badge green">PAID</span></div><div class="portal-record-footer">{paid_date}</div></div>''', unsafe_allow_html=True)
+
+    elif section == "Profile":
+        name = data.get("full_name") or data.get("name") or "Referral Partner"
+        email = data.get("email") or st.session_state.get("xiga_email") or "—"
+        method = data.get("payment_method") or "—"
+        account = data.get("payment_account") or "—"
+        code = data.get("referral_code", "—")
+        link = data.get("referral_link", "—")
+        st.markdown(f'''<div class="portal-profile-card"><div class="portal-avatar">{str(name)[:1].upper()}</div><div><div class="portal-profile-name">{name}</div><div class="portal-muted">{email}</div></div></div>''', unsafe_allow_html=True)
+        st.markdown(f'''<div class="portal-card"><div class="portal-card-title">REFERRAL ACCOUNT</div><div class="portal-detail-row"><span>REFERRAL CODE</span><b>{code}</b></div><div class="portal-detail-row"><span>PAYMENT METHOD</span><b>{method}</b></div><div class="portal-detail-row"><span>PAYMENT ACCOUNT</span><b>{account}</b></div><div class="portal-detail-row"><span>ACCOUNT CREATED</span><b>{_fmt_admin_date(data.get("created_at"))}</b></div></div>''', unsafe_allow_html=True)
+        st.markdown(f'''<div class="portal-card"><div class="portal-card-title">YOUR REFERRAL LINK</div><div class="portal-link">{link}</div></div>''', unsafe_allow_html=True)
+        st.code(str(link), language=None)
+
+    if st.button("LOG OUT", key="partner_logout", use_container_width=True):
+        clear_session(); st.session_state.portal = "REFERRAL"; st.rerun()
     return True
 
 
@@ -326,57 +442,172 @@ def _admin_action(action, **kwargs):
     return call_xiga_function(action, extra=kwargs)
 
 
+def _admin_nav(active):
+    options = ["Overview", "Users", "Generate Keys", "Referrals", "Partners", "Subscriptions"]
+    selected = st.radio("Admin navigation", options, index=options.index(active) if active in options else 0, horizontal=True, label_visibility="collapsed", key="admin_section")
+    if selected != active:
+        st.session_state["admin_section"] = selected
+        st.rerun()
+    return selected
+
+
+def _status_badge(label):
+    label = str(label or "—").upper()
+    cls = "green" if label in ("ACTIVE", "QUALIFIED", "PAID") else "red" if label in ("BLOCKED", "EXPIRED", "UNPAID") else "amber"
+    return f'<span class="portal-badge {cls}">{label}</span>'
+
+
 def admin_panel():
-    render_auth_styles(); status=_admin_status()
-    if not status.get("admin"): return False
+    render_auth_styles()
+    status = _admin_status()
+    if not status.get("admin"):
+        return False
+
     st.markdown('<div class="xiga-auth-topbar"><div></div><div class="xiga-auth-brand"><span>▰</span> XIGA</div><div class="xiga-auth-pro-wrap"><div class="xiga-auth-pro">ADMIN</div></div></div>', unsafe_allow_html=True)
     st.markdown('<div class="xiga-auth-title">XIGA <span>ADMIN</span></div>', unsafe_allow_html=True)
-    st.markdown('<div class="xiga-auth-sub">Administrative controls. Passwords are never displayed.</div>', unsafe_allow_html=True)
-    section=st.radio("Admin sections",["Overview","Users","Generate Keys","Referrals","Partners","Subscriptions","Payments"],horizontal=True,label_visibility="collapsed",key="admin_section")
-    overview=status.get("overview") or {}
-    st.markdown(f'''<div class="xiga-stat-grid"><div class="xiga-stat-box"><b>USERS</b><span>{int(overview.get("users",0))}</span></div><div class="xiga-stat-box"><b>TOTAL REFERRALS</b><span>{int(overview.get("referrals",0))}</span></div><div class="xiga-stat-box"><b>QUALIFIED</b><span class="green">{int(overview.get("qualified",0))}</span></div><div class="xiga-stat-box"><b>PENDING</b><span>{int(overview.get("pending",0))}</span></div><div class="xiga-stat-box"><b>UNPAID REWARDS</b><span class="red">Rs. {int(overview.get("unpaid_rewards",0)):,}</span></div></div>''', unsafe_allow_html=True)
-    if section=="Overview": st.caption("Use the sections above to manage accounts, keys, referrals and payments.")
-    elif section=="Users":
-        for u in status.get("users") or []:
-            uid=u.get("id"); email=u.get("email","—")
-            st.markdown(f'''<div class="xiga-history-item"><div class="xiga-history-top"><span>{email}</span><span>{"ACTIVE" if u.get("active") else "INACTIVE"}</span></div><div class="xiga-history-sub">Subscription: {u.get("subscription_expires_at") or "—"}<br>Key: {u.get("key_status","—")} • Referrals: {u.get("referral_count",0)}</div></div>''',unsafe_allow_html=True)
-            c1,c2,c3,c4=st.columns(4)
+    st.markdown('<div class="xiga-auth-sub">Secure platform management. Passwords are never displayed.</div>', unsafe_allow_html=True)
+
+    section = _admin_nav(st.session_state.get("admin_section", "Overview"))
+    overview = status.get("overview") or {}
+
+    if section == "Overview":
+        st.markdown('<div class="portal-hero"><div class="portal-eyebrow">PLATFORM OVERVIEW</div><div class="portal-hero-title">XIGA control center</div><div class="portal-hero-sub">A compact view of account, subscription and referral activity.</div></div>', unsafe_allow_html=True)
+        stats = [
+            ("TOTAL USERS", int(overview.get("users", 0)), ""),
+            ("ACTIVE SUBSCRIPTIONS", int(overview.get("active_subscriptions", overview.get("active", 0))), "green"),
+            ("PENDING KEY REQUESTS", len(status.get("waiting_for_key") or []), "amber"),
+            ("TOTAL REFERRALS", int(overview.get("referrals", 0)), ""),
+            ("QUALIFIED", int(overview.get("qualified", 0)), "green"),
+            ("UNPAID REWARDS", f'Rs. {int(overview.get("unpaid_rewards", 0)):,}', "red"),
+        ]
+        cards = "".join(f'<div class="portal-metric"><div>{label}</div><strong class="{cls}">{value}</strong></div>' for label,value,cls in stats)
+        st.markdown(f'<div class="portal-metrics">{cards}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="portal-card"><div class="portal-card-title">RECENT ACTIVITY</div></div>', unsafe_allow_html=True)
+        activity = []
+        for u in (status.get("users") or [])[:8]:
+            activity.append((u.get("email", "—"), "Account", _fmt_admin_date(u.get("created_at"))))
+        if not activity:
+            st.markdown('<div class="portal-empty">No recent activity available.</div>', unsafe_allow_html=True)
+        else:
+            for email,event,date in activity[:8]:
+                st.markdown(f'<div class="portal-activity"><div><b>{email}</b><span>{event}</span></div><small>{date}</small></div>', unsafe_allow_html=True)
+
+    elif section == "Users":
+        st.markdown('<div class="portal-section-head"><div><div class="portal-card-title">USER MANAGEMENT</div><div class="portal-muted">Search and manage XIGA accounts.</div></div></div>', unsafe_allow_html=True)
+        users = status.get("users") or []
+        search = st.text_input("Search users", placeholder="Search by email...", key="admin_user_search", label_visibility="collapsed").strip().lower()
+        filtered = [u for u in users if not search or search in str(u.get("email", "")).lower()]
+        if not filtered:
+            st.markdown('<div class="portal-empty">No matching users.</div>', unsafe_allow_html=True)
+        for u in filtered:
+            uid = u.get("id"); email = u.get("email", "—")
+            active = bool(u.get("active")); blocked = bool(u.get("is_blocked"))
+            status_label = "BLOCKED" if blocked else ("ACTIVE" if active else "INACTIVE")
+            expiry = _fmt_admin_date(u.get("subscription_expires_at"), "Not active")
+            st.markdown(f'''<div class="portal-record"><div class="portal-record-top"><div class="portal-record-email">{email}</div>{_status_badge(status_label)}</div><div class="portal-record-grid"><div><small>SUBSCRIPTION</small><b>{expiry}</b></div><div><small>KEY</small><b>{u.get("key_status", "—")}</b></div><div><small>REFERRALS</small><b>{int(u.get("referral_count", 0))}</b></div></div></div>''', unsafe_allow_html=True)
+            c1, c2, c3 = st.columns(3)
             with c1:
-                if st.button("BLOCK/UNBLOCK",key=f"block_{uid}"): _admin_action("admin_toggle_block",user_id=uid); st.rerun()
+                action_label = "UNBLOCK" if blocked else "BLOCK"
+                if st.button(action_label, key=f"block_{uid}", use_container_width=True):
+                    code,data=_admin_action("admin_toggle_block", user_id=uid)
+                    st.success(data.get("message", "Account updated.")) if code==200 else st.error(data.get("error", "Account update failed."))
+                    st.rerun()
             with c2:
-                if st.button("RESET PASSWORD",key=f"reset_{uid}"):
-                    code,data=_admin_action("admin_send_password_reset",email=email); st.success(data.get("message","Password reset email requested.")) if code==200 else st.error(data.get("error","Reset failed."))
+                if st.button("RESET PASSWORD", key=f"reset_{uid}", use_container_width=True):
+                    code,data=_admin_action("admin_send_password_reset", email=email)
+                    st.success(data.get("message", "Password reset email requested.")) if code==200 else st.error(data.get("error", "Reset failed."))
             with c3:
-                if st.button("REMOVE",key=f"remove_{uid}"): _admin_action("admin_remove_user",user_id=uid); st.rerun()
-            with c4:
-                gift=st.selectbox("GIFT",["1 month","2 months","3 months","4 months","5 months","6 months","1 year"],key=f"gift_{uid}")
-                if st.button("GIFT TIME",key=f"gift_btn_{uid}"):
-                    code,data=_admin_action("admin_gift_subscription",user_id=uid,duration=gift); st.success(data.get("message","Subscription extended.")) if code==200 else st.error(data.get("error","Gift failed."))
-    elif section=="Generate Keys":
-        users=status.get("waiting_for_key") or []
-        if not users: st.info("No users are currently waiting for an activation key.")
+                if st.button("REMOVE", key=f"remove_{uid}", use_container_width=True):
+                    code,data=_admin_action("admin_remove_user", user_id=uid)
+                    st.success(data.get("message", "User removed.")) if code==200 else st.error(data.get("error", "Remove failed."))
+            with st.expander("Subscription / Gift", expanded=False):
+                gift=st.selectbox("Gift time",["1 month","2 months","3 months","4 months","5 months","6 months","1 year"],key=f"gift_{uid}")
+                if st.button("GIFT TIME",key=f"gift_btn_{uid}",use_container_width=True):
+                    code,data=_admin_action("admin_gift_subscription",user_id=uid,duration=gift)
+                    st.success(data.get("message","Subscription extended.")) if code==200 else st.error(data.get("error","Gift failed."))
+
+    elif section == "Generate Keys":
+        st.markdown('<div class="portal-section-head"><div><div class="portal-card-title">GENERATE ACTIVATION KEYS</div><div class="portal-muted">Only users waiting for a key are shown here.</div></div></div>', unsafe_allow_html=True)
+        users = status.get("waiting_for_key") or []
+        if not users:
+            st.markdown('<div class="portal-empty">No users are currently waiting for an activation key.</div>', unsafe_allow_html=True)
         for u in users:
             uid=u.get("id"); email=u.get("email","—")
-            st.markdown(f'''<div class="xiga-history-item"><div class="xiga-history-top"><span>{email}</span><span>{u.get("key_status","WAITING")}</span></div><div class="xiga-history-sub">Signed up: {u.get("created_at","—")} • Existing key: {u.get("has_key",False)}</div></div>''',unsafe_allow_html=True)
+            st.markdown(f'''<div class="portal-record"><div class="portal-record-top"><div class="portal-record-email">{email}</div>{_status_badge("WAITING")}</div><div class="portal-record-footer">Signed up: {_fmt_admin_date(u.get("created_at"))}</div></div>''', unsafe_allow_html=True)
             duration=st.selectbox("Subscription duration",["1 day","1 month","6 months","1 year","1.5 years","2 years"],key=f"key_duration_{uid}")
-            if st.button("GENERATE KEY",key=f"gen_key_{uid}"):
+            if st.button("GENERATE KEY",key=f"gen_key_{uid}",use_container_width=True):
                 code,data=_admin_action("admin_generate_key",user_id=uid,duration=duration)
-                if code==200: st.success(data.get("message","Key generated and sent to admin email.")); st.rerun()
-                else: st.error(data.get("error","Unable to generate key."))
-    elif section=="Referrals":
-        for r in status.get("referrals") or []:
-            pay=str(r.get("payment_status","UNPAID")).upper()
-            st.markdown(f'''<div class="xiga-history-item"><div class="xiga-history-top"><span>{r.get("referrer_email","—")}</span><span>{str(r.get("status","PENDING")).upper()}</span></div><div class="xiga-history-sub">Code: {r.get("referral_code","—")} • Referred: {r.get("referred_email","—")}<br>Reward: Rs. {int(r.get("reward",1000)):,} • Payment: {pay}</div></div>''',unsafe_allow_html=True)
-            if pay!="PAID" and st.button("MARK AS PAID",key=f"paid_{r.get('id')}"):
-                code,data=_admin_action("admin_mark_referral_paid",referral_id=r.get("id")); st.success(data.get("message","Marked as paid.")) if code==200 else st.error(data.get("error","Payment update failed."))
-    elif section=="Partners":
-        for p in status.get("partners") or []:
-            st.markdown(f'''<div class="xiga-history-item"><div class="xiga-history-top"><span>{p.get("full_name","—")}</span><span>{p.get("referral_code","—")}</span></div><div class="xiga-history-sub">{p.get("email","—")} • {p.get("payment_method","—")} • {p.get("payment_account","—")}<br>Referrals: {p.get("total_referrals",0)} • Qualified: {p.get("qualified",0)} • Unpaid: Rs. {int(p.get("unpaid",0)):,}</div></div>''',unsafe_allow_html=True)
-    elif section=="Subscriptions":
-        for u in status.get("subscriptions") or []: st.write(f'{u.get("email","—")} • {u.get("subscription_expires_at","—")}')
-    elif section=="Payments":
-        for p in status.get("payments") or []: st.write(p)
-    if st.button("ADMIN LOG OUT",key="admin_logout",use_container_width=True): clear_session(); st.rerun()
+                if code==200:
+                    st.success(data.get("message","Key generated and sent to admin email.")); st.rerun()
+                else:
+                    st.error(data.get("error","Unable to generate key."))
+
+    elif section == "Referrals":
+        st.markdown('<div class="portal-section-head"><div><div class="portal-card-title">REFERRAL MANAGEMENT</div><div class="portal-muted">Track qualification and reward payment status.</div></div></div>', unsafe_allow_html=True)
+        referrals = status.get("referrals") or []
+        total=len(referrals); qualified=sum(1 for r in referrals if str(r.get("status", "PENDING")).upper()=="QUALIFIED"); pending=total-qualified; unpaid=sum(int(r.get("reward",1000)) for r in referrals if str(r.get("payment_status", "UNPAID")).upper()!="PAID" and str(r.get("status", "PENDING")).upper()=="QUALIFIED")
+        cards = "".join([
+            f'<div class="portal-metric"><div>TOTAL</div><strong>{total}</strong></div>',
+            f'<div class="portal-metric"><div>QUALIFIED</div><strong class="green">{qualified}</strong></div>',
+            f'<div class="portal-metric"><div>PENDING</div><strong>{pending}</strong></div>',
+            f'<div class="portal-metric"><div>UNPAID</div><strong class="red">Rs. {unpaid:,}</strong></div>',
+        ])
+        st.markdown(f'<div class="portal-metrics">{cards}</div>', unsafe_allow_html=True)
+        filter_value=st.radio("Referral filter",["ALL","PENDING","QUALIFIED","UNPAID","PAID"],horizontal=True,label_visibility="collapsed",key="admin_referral_filter")
+        filtered=[]
+        for r in referrals:
+            rs=str(r.get("status", "PENDING")).upper(); ps=str(r.get("payment_status", "UNPAID")).upper()
+            if filter_value=="ALL" or filter_value==rs or filter_value==ps: filtered.append(r)
+        if not filtered:
+            st.markdown('<div class="portal-empty">No referrals in this category.</div>', unsafe_allow_html=True)
+        for r in filtered:
+            pay=str(r.get("payment_status", "UNPAID")).upper(); rs=str(r.get("status", "PENDING")).upper()
+            st.markdown(f'''<div class="portal-record"><div class="portal-record-top"><div class="portal-record-email">{r.get("referred_email", "—")}</div>{_status_badge(rs)}</div><div class="portal-record-grid"><div><small>REFERRER</small><b>{r.get("referrer_email", "—")}</b></div><div><small>CODE</small><b>{r.get("referral_code", "—")}</b></div><div><small>REWARD</small><b>Rs. {int(r.get("reward", 1000)):,}</b></div></div><div class="portal-record-footer">Payment: {pay}</div></div>''', unsafe_allow_html=True)
+            if pay != "PAID" and rs == "QUALIFIED":
+                if st.button("MARK AS PAID",key=f"paid_{r.get('id')}",use_container_width=True):
+                    code,data=_admin_action("admin_mark_referral_paid",referral_id=r.get("id"))
+                    st.success(data.get("message", "Marked as paid.")) if code==200 else st.error(data.get("error", "Payment update failed."))
+                    if code==200: st.rerun()
+
+    elif section == "Partners":
+        st.markdown('<div class="portal-section-head"><div><div class="portal-card-title">REFERRAL PARTNERS</div><div class="portal-muted">External partners and their referral performance.</div></div></div>', unsafe_allow_html=True)
+        partners = status.get("partners") or []
+        if not partners:
+            st.markdown('<div class="portal-empty">No external referral partners yet.</div>', unsafe_allow_html=True)
+        for p in partners:
+            st.markdown(f'''<div class="portal-record"><div class="portal-record-top"><div><div class="portal-record-email">{p.get("full_name", "—")}</div><div class="portal-muted">{p.get("email", "—")}</div></div><span class="portal-badge green">PARTNER</span></div><div class="portal-record-grid"><div><small>CODE</small><b>{p.get("referral_code", "—")}</b></div><div><small>REFERRALS</small><b>{int(p.get("total_referrals", 0))}</b></div><div><small>QUALIFIED</small><b>{int(p.get("qualified", 0))}</b></div><div><small>UNPAID</small><b>Rs. {int(p.get("unpaid", 0)):,}</b></div></div><div class="portal-record-footer">{p.get("payment_method", "—")} • {p.get("payment_account", "—")}</div></div>''', unsafe_allow_html=True)
+
+    elif section == "Subscriptions":
+        st.markdown('<div class="portal-section-head"><div><div class="portal-card-title">SUBSCRIPTION MANAGEMENT</div><div class="portal-muted">Current subscription lifecycle and admin gift history.</div></div></div>', unsafe_allow_html=True)
+        subs = status.get("subscriptions") or []
+        active=[]; expired=[]; upcoming=[]
+        now=datetime.now(timezone.utc)
+        for u in subs:
+            raw=u.get("subscription_expires_at")
+            try:
+                dt=datetime.fromisoformat(str(raw).replace("Z", "+00:00")) if raw else None
+                if dt and dt.tzinfo is None: dt=dt.replace(tzinfo=timezone.utc)
+                if not dt or dt <= now: expired.append(u)
+                elif (dt-now).days <= 30: upcoming.append(u)
+                else: active.append(u)
+            except Exception:
+                expired.append(u)
+        groups=[("ACTIVE",active,"green"),("EXPIRING SOON",upcoming,"amber"),("EXPIRED",expired,"red")]
+        for title,items,cls in groups:
+            st.markdown(f'<div class="portal-group-title"><span>{title}</span><b>{len(items)}</b></div>',unsafe_allow_html=True)
+            if not items:
+                st.markdown('<div class="portal-empty small">None</div>',unsafe_allow_html=True)
+            for u in items:
+                st.markdown(f'''<div class="portal-record"><div class="portal-record-top"><div class="portal-record-email">{u.get("email", "—")}</div><span class="portal-badge {cls}">{title}</span></div><div class="portal-record-footer">Expires: {_fmt_admin_date(u.get("subscription_expires_at"), "—")}</div></div>''',unsafe_allow_html=True)
+        gifts=status.get("gifts") or status.get("gift_history") or []
+        st.markdown('<div class="portal-card" style="margin-top:14px"><div class="portal-card-title">GIFT HISTORY</div></div>',unsafe_allow_html=True)
+        if not gifts:
+            st.markdown('<div class="portal-empty">No gift records available.</div>',unsafe_allow_html=True)
+        for g in gifts[:100]:
+            st.markdown(f'''<div class="portal-record"><div class="portal-record-top"><div class="portal-record-email">{g.get("email", g.get("user_email", "—"))}</div><span class="portal-badge green">+{g.get("duration", g.get("gift", "—"))}</span></div><div class="portal-record-footer">{_fmt_admin_date(g.get("created_at") or g.get("gifted_at"))} • {g.get("reason", "Admin gift")}</div></div>''',unsafe_allow_html=True)
+
+    if st.button("ADMIN LOG OUT",key="admin_logout",use_container_width=True):
+        clear_session(); st.rerun()
     st.stop()
 
 
@@ -386,7 +617,10 @@ def xiga_subscription_login():
     if st.session_state.get("portal","XIGA APP")=="REFERRAL": _render_referral_portal(); st.stop()
     if ensure_session_from_cookie():
         admin=_admin_status()
-        if admin.get("admin"): st.session_state.admin_mode=True; admin_panel()
+        if admin.get("admin"):
+            st.session_state.admin_mode=True
+            admin_panel()
+            return True
         status=get_subscription_status()
         if status is None: st.error("Unable to verify your XIGA PRO subscription right now."); st.stop()
         st.session_state["xiga_email"]=st.session_state.get("xiga_email") or status.get("email","")
@@ -1908,97 +2142,5 @@ def dashboard_page():
         else:
             timer = "READY"; live_status = "WAITING FOR ANALYSIS"
         reason = result.get("result_reason") or result.get("description") or "Select your market, asset and timeframe, then analyze the market."
-        st.markdown(f'''<div class="xiga-signal-card {card_class}"><div class="xiga-signal-head"><span>XIGA SIGNAL • {timeframe}</span><span class="xiga-badge {badge_class}">{badge}</span></div><div class="xiga-signal-circle {circle_class}"><div class="xiga-signal-circle-inner"><div class="xiga-signal-circle-icon">{icon}</div><div class="xiga-signal-circle-text">{circle_text}</div></div></div><div class="xiga-signal-main"><div class="{direction_class}" style="font-size:15px;font-weight:900">{display_signal if signal != "NO TRADE" else "WAIT FOR STRONGER CONFIRMATION"}</div><div><div class="xiga-confidence-label">CONFIDENCE</div><div class="xiga-confidence-value">{probability_text}</div><div class="xiga-bar"><span style="width:{int(probability or 0)}%"></span></div></div></div>{levels}</div>''', unsafe_allow_html=True)
-        tick, _ = get_latest_tick(provider, symbol, fresh=True)
-        live_price = float(tick["price"]) if tick else (float(trade_pending.get("live_price")) if trade_pending and trade_pending.get("live_price") else None)
-        if trade_pending and live_price is not None: trade_pending["live_price"] = live_price
-        entry_for_delta = float(entry) if entry is not None else live_price
-        delta = (live_price - entry_for_delta) if live_price is not None and entry_for_delta is not None else 0
-        delta_pct = (delta / entry_for_delta * 100) if entry_for_delta else 0
-        st.markdown(f'''<div class="xiga-live-grid"><div class="xiga-mini"><div class="xiga-mini-label">TRADE TIMER</div><div class="xiga-mini-value">{timer}</div><div class="xiga-mini-sub">{timeframe} • {live_status}</div></div><div class="xiga-mini"><div class="xiga-mini-label">LIVE PRICE</div><div class="xiga-mini-value">{f'{live_price:.8g}' if live_price is not None else '—'}</div><div class="xiga-mini-sub">{delta:+.8g} ({delta_pct:+.2f}%)</div></div></div>''', unsafe_allow_html=True)
-
-    if result.get("success"):
-        reasons = result.get("reasons") or [result.get("description", "Current market conditions were analyzed.")]
-        short_reason = " • ".join(reasons[:3])
-        rsi_value = result.get("rsi"); macd_value = result.get("macd")
-        trend = "UPTREND" if signal == "CALL" else "DOWNTREND" if signal == "PUT" else "MIXED"
-        momentum = "STRONG" if abs(float(result.get("score", 0))) >= 4 else "MODERATE"
-        volatility = "NORMAL" if result.get("atr") is not None else "UNKNOWN"
-        st.markdown(f'''<div class="xiga-card"><div class="xiga-why"><div class="xiga-why-icon">💡</div><div><div class="xiga-why-title">Signal explanation</div><div class="xiga-why-text">{short_reason}</div></div></div><div class="xiga-tech-grid"><div class="xiga-tech"><b>RSI</b><span>{f'{rsi_value:.1f}' if rsi_value is not None else '—'}</span></div><div class="xiga-tech"><b>MACD</b><span>{f'{macd_value:.5f}' if macd_value is not None else '—'}</span></div><div class="xiga-tech"><b>EMA TREND</b><span>{trend}</span></div><div class="xiga-tech"><b>MOMENTUM</b><span>{momentum}</span></div></div></div>''', unsafe_allow_html=True)
-        st.markdown(f'''<div class="xiga-card"><div class="xiga-section-title" style="font-size:12px">Market Status</div><div class="xiga-status-grid"><div class="xiga-status-item"><div class="xiga-status-label">TREND</div><div class="xiga-status-value {"green" if trend == "UPTREND" else "red" if trend == "DOWNTREND" else ""}">{trend}</div></div><div class="xiga-status-item"><div class="xiga-status-label">VOLATILITY</div><div class="xiga-status-value">{volatility}</div></div><div class="xiga-status-item"><div class="xiga-status-label">DATA</div><div class="xiga-status-value green">CONNECTED</div></div></div><div class="xiga-note">News: {result.get("news_status", "Not used")} • Historical setup sample: {result.get("historical_samples", 0)}</div></div>''', unsafe_allow_html=True)
-    st.markdown('<div class="xiga-footer">🔒 SECURE • XIGA PRO • LIVE MARKET ANALYSIS • NO AUTOMATIC TRADE EXECUTION</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-
-def backtest_page():
-    st.markdown('<div class="xiga-app">',unsafe_allow_html=True)
-    st.markdown('<div class="xiga-page-card"><div class="xiga-page-title">🧪 Backtest</div><div class="xiga-page-sub">Test XIGA against historical completed candles. Historical performance does not guarantee future results.</div></div>',unsafe_allow_html=True)
-    bt_mode=st.radio("Backtest depth",["STANDARD • 5,000 CANDLES","DEEP • 10,000 CANDLES"],horizontal=True,key="backtest_mode")
-    target_count=BACKTEST_DEEP_CANDLES if bt_mode.startswith("DEEP") else BACKTEST_STANDARD_CANDLES
-    bt_default=st.session_state.get("backtest_provider","Binance")
-    if bt_default not in BACKTEST_PROVIDERS: bt_default="Binance"
-    provider=st.selectbox("Platform",BACKTEST_PROVIDERS,index=BACKTEST_PROVIDERS.index(bt_default),key="backtest_provider")
-    if provider=="BiQuote":
-        category=st.selectbox("Market",list(ASSETS.keys()),key="backtest_category"); asset_map=ASSETS.get(category) or {}
-    else:
-        st.selectbox("Market",["Crypto / USDT • SPOT"],disabled=True,key=f"backtest_market_{provider}"); asset_map, _ = get_spot_exchange_assets(provider)
-    asset_names=list(asset_map.keys())
-    if asset_names:
-        asset=st.selectbox("Asset",asset_names,key="backtest_asset"); timeframe=st.selectbox("Timeframe",list(TIMEFRAMES.keys()),key="backtest_timeframe")
-        if st.button("🧪 RUN BACKTEST",key="run_backtest",use_container_width=True):
-            with st.spinner(f"Downloading and testing {target_count:,} completed candles..."): st.session_state.backtest_result=run_xiga_backtest(provider,asset_map[asset],timeframe,target_count)
-        bt=st.session_state.get("backtest_result")
-        if bt:
-            if not bt.get("success"):
-                st.error(bt.get("error","Backtest failed.")); st.caption(bt.get("status",""))
-            else:
-                st.markdown(f'''<div class="xiga-backtest-grid"><div class="xiga-stat-box"><b>COMPLETED CANDLES</b><span>{bt["candles"]:,}</span></div><div class="xiga-stat-box"><b>TOTAL SIGNALS</b><span>{bt["signals"]:,}</span></div><div class="xiga-stat-box"><b>WINS</b><span class="green">{bt["wins"]:,}</span></div><div class="xiga-stat-box"><b>LOSSES</b><span class="red">{bt["losses"]:,}</span></div><div class="xiga-stat-box"><b>WIN RATE</b><span>{bt["accuracy"]:.1f}%</span></div><div class="xiga-stat-box"><b>TP RATE</b><span>{bt["tp_rate"]:.1f}%</span></div></div>''',unsafe_allow_html=True)
-                st.markdown(f'<div class="xiga-note">BUY signals: {bt["calls"]:,} • SELL signals: {bt["puts"]:,}<br>BUY accuracy: {bt["call_accuracy"]:.1f}% • SELL accuracy: {bt["put_accuracy"]:.1f}%<br>TP hits: {bt["tp_hits"]:,} • TP not reached: {bt["tp_misses"]:,}<br>Average favorable movement: {bt["avg_favorable"]:.3f}%</div>',unsafe_allow_html=True)
-                if bt.get("validation_ok"): st.success("Historical validation thresholds met.")
-                else: st.warning("Historical validation thresholds not met.")
-                st.caption(bt.get("validation_reason","Historical validation only."))
-                st.caption("Validation checks are historical only: at least 100 signals, ≥55% directional accuracy and ≥50% TP-hit rate. They are not future guarantees.")
-    st.markdown('</div>',unsafe_allow_html=True)
-
-
-def history_page():
-    st.markdown('<div class="xiga-app">',unsafe_allow_html=True)
-    st.markdown('<div class="xiga-page-card"><div class="xiga-page-title">📜 History</div><div class="xiga-page-sub">Recorded XIGA live signals from this session.</div></div>',unsafe_allow_html=True)
-    if not st.session_state.history:
-        st.markdown('<div class="xiga-page-card"><div class="xiga-muted">No live signals have been generated yet.</div></div>',unsafe_allow_html=True)
-    else:
-        for item in st.session_state.history[:30]:
-            status=item.get("status","PENDING"); cls="green" if status=="WIN" else "red" if status=="LOSS" else ""
-            st.markdown(f'''<div class="xiga-history-item"><div class="xiga-history-top"><span>{item.get("asset","—")}</span><span class="{cls}">{signal_display(item.get("signal"))}</span></div><div class="xiga-history-sub">{item.get("provider","—")} • {item.get("timeframe","—")} • {item.get("time","—")}<br>Entry: {item.get("price","—")} • TP: {item.get("take_profit","—")} • SL: {item.get("stop_loss","—")}</div><div class="xiga-history-result {cls}">{status}{(" • TP HIT IN " + str(item.get("tp_hit_elapsed"))) if status=="WIN" and item.get("tp_hit_elapsed") else ""}{(" • " + str(item.get("result_reason"))) if status in ("LOSS","EXPIRED") else ""}</div></div>''',unsafe_allow_html=True)
-    st.markdown('</div>',unsafe_allow_html=True)
-
-
-def profile_page():
-    status=get_subscription_status() or st.session_state.get("xiga_status") or {}
-    email=st.session_state.get("xiga_email") or status.get("email") or "Account"
-    active=bool(status.get("active",True)); expiry=status.get("subscription_expires_at") or "—"; days=status.get("days_remaining",0); expiry_short=str(expiry)[:10] if expiry!="—" else "—"
-    total=len(st.session_state.history); wins=sum(1 for x in st.session_state.history if x.get("status")=="WIN"); losses=sum(1 for x in st.session_state.history if x.get("status")=="LOSS"); expired=sum(1 for x in st.session_state.history if x.get("status")=="EXPIRED"); decided=wins+losses; observed_rate=wins/decided*100 if decided else 0; tp_hit_rate=wins/total*100 if total else 0
-    st.markdown('<div class="xiga-app">',unsafe_allow_html=True)
-    st.markdown(f'''<div class="xiga-page-card"><div class="xiga-page-title">👤 Profile</div><div class="xiga-account-card" style="margin-top:10px"><div class="xiga-account-label">ACCOUNT EMAIL</div><div class="xiga-account-value">{email}</div><div class="xiga-profile-levels"><div class="xiga-profile-level"><b>STATUS</b><span>{"ACTIVE" if active else "INACTIVE"}</span></div><div class="xiga-profile-level"><b>DAYS LEFT</b><span>{days}</span></div><div class="xiga-profile-level"><b>EXPIRES</b><span>{expiry_short}</span></div></div></div></div>''',unsafe_allow_html=True)
-    st.markdown(f'''<div class="xiga-page-card"><div class="xiga-page-title" style="font-size:14px">Quick Stats</div><div class="xiga-stat-grid"><div class="xiga-stat-box"><b>TOTAL SIGNALS</b><span>{total}</span></div><div class="xiga-stat-box"><b>WINS</b><span class="green">{wins}</span></div><div class="xiga-stat-box"><b>LOSSES</b><span class="red">{losses}</span></div><div class="xiga-stat-box"><b>EXPIRED</b><span>{expired}</span></div><div class="xiga-stat-box"><b>WIN RATE</b><span>{observed_rate:.1f}%</span></div><div class="xiga-stat-box"><b>TP HIT RATE</b><span>{tp_hit_rate:.1f}%</span></div></div><div class="xiga-note">These are recorded XIGA signals from your current session, not a prediction.</div></div>''',unsafe_allow_html=True)
-    ref_code, ref_data = call_xiga_function("referral_details")
-    ref_data = ref_data if ref_code == 200 else {}
-    st.markdown(f'''<div class="xiga-page-card"><div class="xiga-page-title" style="font-size:14px">Referral Details</div><div class="xiga-note">Refer unlimited customers. A referral becomes QUALIFIED only after the referred customer activates their XIGA subscription key. Reward: Rs. 1,000 per qualified referral.</div><div class="xiga-account-card" style="margin-top:9px"><div class="xiga-account-label">REFERRAL CODE</div><div class="xiga-account-value" style="color:#20e7a0">{ref_data.get("referral_code","—")}</div><div class="xiga-account-label" style="margin-top:8px">REFERRAL LINK</div><div style="font-size:9px;color:#dceeff;word-break:break-all;margin-top:3px">{ref_data.get("referral_link","—")}</div></div><div class="xiga-stat-grid"><div class="xiga-stat-box"><b>TOTAL</b><span>{int(ref_data.get("total_referrals",0))}</span></div><div class="xiga-stat-box"><b>QUALIFIED</b><span class="green">{int(ref_data.get("qualified",0))}</span></div><div class="xiga-stat-box"><b>PENDING</b><span>{int(ref_data.get("pending",0))}</span></div><div class="xiga-stat-box"><b>EARNED</b><span>Rs. {int(ref_data.get("earned",0)):,}</span></div><div class="xiga-stat-box"><b>PAID</b><span class="green">Rs. {int(ref_data.get("paid",0)):,}</span></div><div class="xiga-stat-box"><b>UNPAID</b><span class="red">Rs. {int(ref_data.get("unpaid",0)):,}</span></div></div></div>''',unsafe_allow_html=True)
-    for item in (ref_data.get("history") or [])[:100]:
-        status_label=str(item.get("status","PENDING")).upper(); cls="green" if status_label=="QUALIFIED" else ""
-        st.markdown(f'''<div class="xiga-history-item"><div class="xiga-history-top"><span>{item.get("referred_email","—")}</span><span class="{cls}">{status_label}</span></div><div class="xiga-history-sub">Reward: Rs. {int(item.get("reward",1000)):,} • Payment: {str(item.get("payment_status","UNPAID")).upper()}</div></div>''',unsafe_allow_html=True)
-    if st.button("🚪 LOG OUT",key="profile_logout",use_container_width=True): clear_session(); st.rerun()
-    st.markdown('<div class="xiga-footer">XIGA PRO • ACCOUNT & SUBSCRIPTION</div></div>',unsafe_allow_html=True)
-
-
-
-selected_page=st.session_state.get("page","Dashboard")
-if selected_page not in ("Dashboard","Backtest","History","Profile"): selected_page="Dashboard"
-render_app_header(selected_page)
-if selected_page=="Dashboard":
-    @st.fragment(run_every="1s")
-    def dashboard_fragment(): dashboard_page()
-    dashboard_fragment()
-elif selected_page=="Backtest": backtest_page()
-elif selected_page=="History": history_page()
-elif selected_page=="Profile": profile_page()
+        st.markdown(f'''<div class="xiga-signal-card {card_class}"><div class="xiga-signal-head"><span>XIGA SIGNAL • {timeframe}</span><span class="xiga-badge {badge_class}">{badge}</span></div><div class="xiga-signal-circle {circle_class}"><div class="xiga-signal-circle-inner"><div class="xiga-signal-circle-icon">{icon}</div><div class="xiga-signal-circle-text">{circle_text}</div></div></div><div class="xiga-signal-main"><div class="{direction_class}" style="font-size:15px;font-weight:900">{display_signal if signal != "NO TRADE" else "WAIT FOR STRONGER CONFIRMATION"}</div><div><div class="xiga-confidence-label">CONFIDENCE</div><div class="xiga-confidence-value">{probability_text}</div><div class="xiga-bar"><span style="width:{int(probability or 0)}%"></span></div></div></div>{levels}</div>'
+Preview truncated for large file
